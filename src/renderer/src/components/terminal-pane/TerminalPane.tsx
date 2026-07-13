@@ -170,6 +170,7 @@ import {
   createTerminalQuickCommandDraft,
   TerminalQuickCommandDialog
 } from '@/components/terminal-quick-commands/TerminalQuickCommandDialog'
+import { saveTerminalQuickCommand } from '@/lib/agent-catalog-authoring'
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { pasteTerminalClipboard } from './terminal-clipboard-paste'
 import {
@@ -904,13 +905,9 @@ function TerminalPane(
     setQuickCommandEditorOpen(true)
   }, [])
 
-  const saveQuickCommand = useCallback(
-    (command: TerminalQuickCommand): void => {
-      const currentCommands = useAppStore.getState().settings?.terminalQuickCommands ?? []
-      void updateSettings({ terminalQuickCommands: [...currentCommands, command] })
-    },
-    [updateSettings]
-  )
+  const saveQuickCommand = useCallback((command: TerminalQuickCommand): void => {
+    void saveTerminalQuickCommand(command)
+  }, [])
 
   useEffect(() => {
     if (setupSplit) {

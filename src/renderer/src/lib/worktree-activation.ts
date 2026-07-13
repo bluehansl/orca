@@ -14,6 +14,7 @@ import type {
   AgentProviderSessionMetadata,
   SleepingAgentLaunchConfig
 } from '../../../shared/agent-session-resume'
+import type { AgentLaunchSpawnRequest } from '../../../shared/agent-launch-spawn-request'
 import { shouldAutoCreateInitialTerminal } from '@/components/terminal/initial-terminal'
 import { buildSetupRunnerCommand } from './setup-runner'
 import { createSequencedSetupAgentCommands } from '../../../shared/setup-agent-sequencing'
@@ -61,6 +62,13 @@ import type { SessionOptionValue } from '../../../shared/native-chat-session-opt
  *  only after the spawn succeeds. See telemetry-plan.md§Agent launch semantics. */
 export type AgentStartedTelemetry = EventProps<'agent_started'>
 
+/** Threading-path variant: `agent_kind` is host-authoritative on the resolved
+ *  launch path (main overwrites it from the validated receipt before the emit),
+ *  so a host-resolved launch site omits it. Legacy non-resolver launches still
+ *  thread it as their sole is-agent signal. */
+export type StartupLaunchTelemetry = Omit<AgentStartedTelemetry, 'agent_kind'> &
+  Partial<Pick<AgentStartedTelemetry, 'agent_kind'>>
+
 /** Startup command threaded onto a worktree's first terminal at activation. */
 export type WorktreeStartupPayload = {
   command: string
@@ -73,7 +81,12 @@ export type WorktreeStartupPayload = {
   startupCommandDelivery?: StartupCommandDelivery
   initialAgentStatus?: { agent: TuiAgent; prompt: string }
   sessionOptions?: Record<string, SessionOptionValue>
-  telemetry?: AgentStartedTelemetry
+  telemetry?: StartupLaunchTelemetry
+  /** Identity-only host launch. When present the host resolves the command,
+   *  config, and token; `command` is empty and the client never resolves argv/
+   *  env. Used by the create-record-then-launch paths (folder workspace, reopen)
+   *  that spawn through `pty:spawn` after the record already exists. */
+  agentLaunch?: AgentLaunchSpawnRequest
 }
 
 // Why: accept either a main-generated runner script or a plain TaskPage command string, so callers needn't synthesize a runner file.
@@ -117,7 +130,8 @@ type WorktreeActivationStore = Partial<WorktreeRuntimeOwnerState> & {
       draftPrompt?: string
       initialAgentStatus?: { agent: TuiAgent; prompt: string }
       showSessionRestoredBanner?: boolean
-      telemetry?: AgentStartedTelemetry
+      telemetry?: StartupLaunchTelemetry
+      agentLaunch?: AgentLaunchSpawnRequest
     }
   ) => void
   queueTabSetupSplit: (
@@ -227,6 +241,11 @@ export function activateAndRevealWorktree(
     sidebarRevealBehavior?: PendingSidebarWorktreeReveal['behavior']
     notifyHostRuntime?: boolean
     revealInSidebar?: boolean
+    /** The host already spawned the primary agent terminal for this create (its
+     *  `launched` receipt is the proof). Suppresses the reopen-startup fallback
+     *  and the bare-primary auto-create so the renderer never spawns a duplicate;
+     *  setup/default tabs/issue command still materialize around the host tab. */
+    hostSpawnedPrimary?: boolean
   }
 ): ActivateAndRevealResult | false {
   const state = useAppStore.getState()
@@ -279,14 +298,17 @@ export function activateAndRevealWorktree(
   // Why: sleeping destroys the local PTY but preserves the provider session id, so waking should restore those CLI sessions automatically.
   resumeSleepingAgentSessionsForWorktree(worktreeId)
 
-  // 4. Ensure a focusable surface exists for externally-created worktrees
+  // 4. Ensure a focusable surface exists for externally-created worktrees.
+  // Why: when the host already spawned the primary (launched create), never
+  // synthesize a client reopen startup — that would spawn a duplicate agent.
   const primaryTabId = ensureWorktreeHasInitialTerminal(
     useAppStore.getState(),
     worktreeId,
     opts?.startup,
     opts?.setup,
     opts?.issueCommand,
-    opts?.defaultTabs
+    opts?.defaultTabs,
+    opts?.hostSpawnedPrimary ? { hostSpawnedPrimary: true } : undefined
   )
   if (primaryTabId && opts?.initialCwd) {
     useAppStore.getState().queueTabInitialCwd(primaryTabId, opts.initialCwd)
@@ -379,7 +401,7 @@ export function ensureWorktreeHasInitialTerminal(
   setup?: WorktreeSetupLaunch,
   issueCommand?: IssueCommandLaunch,
   defaultTabs?: WorktreeDefaultTabsLaunch,
-  opts?: { activateCreatedTabs?: boolean }
+  opts?: { activateCreatedTabs?: boolean; hostSpawnedPrimary?: boolean }
 ): string | null {
   const { renderableTabCount } = store.reconcileWorktreeTabModel(worktreeId)
   // Why: creating a terminal just because the legacy terminal slice is empty gives editor/browser-only worktrees an unexpected extra tab.
@@ -425,6 +447,59 @@ export function ensureWorktreeHasInitialTerminal(
     }
     if (setup || issueCommand) {
       // Why: runtime-owned worktrees mirror session tabs async, so hold commands for the first mirrored tab instead of dropping them.
+      queueHookCommandsForFirstWorktreeTab({
+        worktreeId,
+        deliver: (state, firstTerminalTabId) =>
+          queueSetupAndIssueCommands(
+            state,
+            worktreeId,
+            firstTerminalTabId,
+            setup,
+            issueCommand,
+            wrappedSetupCommandStr,
+            opts
+          )
+      })
+    }
+    return null
+  }
+
+  // Why: on a host-atomic agent launch the host spawns the ONE primary agent
+  // terminal (I9). It arrives asynchronously via worktrees:changed/session-tabs
+  // hydration with no client-adoptable tab id, and there is no guarantee it
+  // lands before this runs — so the renderer must never spawn a second primary.
+  // Still materialize the setup/default tabs and issue command around it,
+  // holding them for the first hydrated tab when none exists yet. The setup tab
+  // runs the host-wrapped setup command (result.setup.command) that emits the
+  // marker the host agent terminal is waiting on.
+  if (opts?.hostSpawnedPrimary) {
+    const templatedTabId = applyDefaultTerminalTabs(
+      store,
+      worktreeId,
+      undefined,
+      setup,
+      issueCommand,
+      defaultTabs,
+      wrappedSetupCommandStr,
+      opts
+    )
+    if (templatedTabId) {
+      return templatedTabId
+    }
+    const existingTerminalTabId = store.tabsByWorktree[worktreeId]?.[0]?.id
+    if (existingTerminalTabId && (setup || issueCommand)) {
+      queueSetupAndIssueCommands(
+        store,
+        worktreeId,
+        existingTerminalTabId,
+        setup,
+        issueCommand,
+        wrappedSetupCommandStr,
+        opts
+      )
+      return existingTerminalTabId
+    }
+    if (setup || issueCommand) {
       queueHookCommandsForFirstWorktreeTab({
         worktreeId,
         deliver: (state, firstTerminalTabId) =>

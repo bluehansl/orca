@@ -48,6 +48,7 @@ import {
   registerRendererMemoryProfileContributor,
   summarizeStateCollectionSizes
 } from '@/lib/renderer-memory-profile'
+import { registerTelemetryAgentCatalogSource } from '@/lib/telemetry-agent-kind'
 
 export const useAppStore = create<AppState>()((...a) => {
   // Why: the inner api is only reachable here, before create() copies subscribe onto the hook.
@@ -103,6 +104,10 @@ registerHttpLinkStoreAccessor(() => useAppStore.getState())
 registerRendererMemoryProfileContributor('store', () =>
   summarizeStateCollectionSizes(useAppStore.getState(), 20)
 )
+
+// Why: telemetry-agent-kind cannot import the store (slices reach it through
+// the launch libs, which would form an init cycle); inject the source instead.
+registerTelemetryAgentCatalogSource(() => useAppStore.getState().settings)
 
 export type { AppState } from './types'
 

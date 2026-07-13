@@ -205,6 +205,7 @@ import {
   saveSourceControlActionRecipe,
   type SourceControlAiWriteTarget
 } from '../../../shared/source-control-ai-recipe-save'
+import { saveSourceControlAiSettings } from '@/lib/agent-catalog-authoring'
 import type {
   GitHubOwnerRepo,
   GitHubPRFile,
@@ -4470,7 +4471,6 @@ function ChecksTab({
 }): React.JSX.Element {
   const targetRepoId = repoId ?? item.repoId
   const settings = useAppStore((s) => s.settings)
-  const updateSettings = useAppStore((s) => s.updateSettings)
   const updateRepo = useAppStore((s) => s.updateRepo)
   const repo = useAppStore((s) =>
     targetRepoId ? (s.repos.find((candidate) => candidate.id === targetRepoId) ?? null) : null
@@ -4535,18 +4535,17 @@ function ChecksTab({
         recipe
       })
       if ('sourceControlAi' in result) {
-        await updateSettings({ sourceControlAi: result.sourceControlAi })
+        await saveSourceControlAiSettings(result.sourceControlAi)
         return
       }
       await updateRepo(result.target.repoId, result.update)
     },
-    [updateRepo, updateSettings]
+    [updateRepo]
   )
   const handleStartFixChecksFromDialog = useCallback(
     async ({
       agent,
-      commandInput,
-      agentArgs
+      commandInput
     }: {
       agent: Parameters<typeof launchWorkItemDirect>[0]['agentOverride']
       commandInput: string
@@ -4562,7 +4561,8 @@ function ChecksTab({
         telemetrySource: 'sidebar',
         promptDelivery: 'submit-after-ready',
         agentOverride: agent,
-        agentArgs,
+        // The host resolves the fixChecks recipe's stored agentArgs from this locator.
+        sourceControlActionId: 'fixChecks',
         openModalFallback: () => {
           toast.error(
             translate(
