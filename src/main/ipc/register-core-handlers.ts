@@ -41,6 +41,7 @@ import {
 } from './browser'
 import { registerSessionHandlers } from './session'
 import { registerSettingsHandlers } from './settings'
+import { registerAgentCatalogHandlers } from './agent-catalog'
 import { registerDiagnosticsHandlers } from './diagnostics'
 import { registerSkillsHandlers } from './skills'
 import { registerWorkspaceSpaceHandlers } from './workspace-space'
@@ -88,6 +89,7 @@ import type {
 import {
   getSavedRuntimeAiVaultHostInfos,
   prepareRuntimeAiVaultSessionResume,
+  resolveRuntimeAiVaultResumeDetails,
   scanRuntimeAiVaultSessions
 } from '../ai-vault/runtime-session-scanner'
 import type { PluginService } from '../plugins/plugin-service'
@@ -178,6 +180,7 @@ export function registerCoreHandlers(
   registerTerminalRenderDesyncEvidenceHandler()
   registerComputerUsePermissionHandlers()
   registerSettingsHandlers(store, agentAwakeService)
+  registerAgentCatalogHandlers(store)
   registerSkillsHandlers(store)
   if (automations) {
     registerAutomationHandlers(store, automations)
@@ -223,7 +226,12 @@ export function registerCoreHandlers(
     scanRuntimeAiVaultSessions: async (environmentId, args, options) =>
       scanRuntimeAiVaultSessions(app.getPath('userData'), environmentId, args, options),
     prepareRuntimeSessionResume: async (environmentId, args) =>
-      prepareRuntimeAiVaultSessionResume(app.getPath('userData'), environmentId, args)
+      prepareRuntimeAiVaultSessionResume(app.getPath('userData'), environmentId, args),
+    resolveRuntimeAiVaultResumeDetails: (environmentId, entry) =>
+      resolveRuntimeAiVaultResumeDetails(app.getPath('userData'), environmentId, entry),
+    // Host settings for the copy-command assembly (cmd overrides, default
+    // args/env, Windows shell); the store owns the authoritative values.
+    getVaultResumeSettings: () => store.getSettings?.()
   })
   registerNativeChatHandlers()
   registerClipboardHandlers(store)

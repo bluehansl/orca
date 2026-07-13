@@ -43,6 +43,7 @@ import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { OrchestrationError } from './orchestration-error'
 import { resolveOrchestrationMigrationStartVersion } from './orchestration-schema-version-skew'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../shared/protocol-version'
+import type { PersistedAgentLaunchFailure } from '../../../shared/agent-launch-contract'
 
 // Why: leaf UUID is the remint-stable pane identity (tab half changes on break-out); exact match covers legacy/unparseable keys.
 function isEquivalentPaneKey(a: string, b: string): boolean {
@@ -213,8 +214,8 @@ export const LEGACY_RUN_ID = ORCHESTRATION_LEGACY_RUN_ID
 export const LEGACY_CONTRACT_VERSION = 0
 export const CURRENT_CONTRACT_VERSION = ORCHESTRATION_CONTRACT_VERSION
 
-// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance.
-const SCHEMA_VERSION = 21
+// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance, v22 dispatch agent-launch recovery.
+const SCHEMA_VERSION = 22
 
 function hardenOrchestrationDatabaseFiles(dbPath: string | ':memory:'): void {
   if (dbPath === ':memory:' || process.platform === 'win32') {
@@ -446,13 +447,19 @@ export class OrchestrationDb {
         process_incarnation TEXT,
         capability_revoked_at TEXT,
         status              TEXT NOT NULL DEFAULT 'pending'
-          CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'circuit_broken')),
+          CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'circuit_broken', 'forgotten')),
         failure_count       INTEGER NOT NULL DEFAULT 0,
         last_failure        TEXT,
         dispatched_at       TEXT,
         completed_at        TEXT,
         created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-        last_heartbeat_at   TEXT
+        last_heartbeat_at   TEXT,
+        -- U6: nullable requested/base identity validate launch ownership;
+        -- agent_launch_failure is the JSON structured launch failure alongside
+        -- the retained generic last_failure string.
+        requested_agent     TEXT,
+        base_agent          TEXT,
+        agent_launch_failure TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_dispatch_task ON dispatch_contexts(task_id);
@@ -834,6 +841,50 @@ export class OrchestrationDb {
       }
       if (current < 21) {
         this.migrateLegacySchedulerLossProvenance()
+      }
+      if (current < 22 && !this.hasColumn('dispatch_contexts', 'requested_agent')) {
+        this.db.exec(`
+          CREATE TABLE dispatch_contexts_new (
+            id                    TEXT PRIMARY KEY,
+            run_id                TEXT NOT NULL DEFAULT '${LEGACY_RUN_ID}',
+            task_id               TEXT NOT NULL,
+            contract_version      INTEGER NOT NULL DEFAULT ${CURRENT_CONTRACT_VERSION},
+            launch_token_hash     TEXT,
+            assignee_handle       TEXT,
+            assignee_pane_key     TEXT,
+            capability_hash       TEXT,
+            process_incarnation   TEXT,
+            capability_revoked_at TEXT,
+            status                TEXT NOT NULL DEFAULT 'pending'
+              CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'circuit_broken', 'forgotten')),
+            failure_count         INTEGER NOT NULL DEFAULT 0,
+            last_failure          TEXT,
+            dispatched_at         TEXT,
+            completed_at          TEXT,
+            created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+            last_heartbeat_at     TEXT,
+            requested_agent       TEXT,
+            base_agent            TEXT,
+            agent_launch_failure  TEXT
+          );
+          INSERT INTO dispatch_contexts_new (
+            id, run_id, task_id, contract_version, launch_token_hash,
+            assignee_handle, assignee_pane_key, capability_hash, process_incarnation,
+            capability_revoked_at, status, failure_count, last_failure, dispatched_at,
+            completed_at, created_at, last_heartbeat_at
+          )
+          SELECT
+            id, run_id, task_id, contract_version, launch_token_hash,
+            assignee_handle, assignee_pane_key, capability_hash, process_incarnation,
+            capability_revoked_at, status, failure_count, last_failure, dispatched_at,
+            completed_at, created_at, last_heartbeat_at
+          FROM dispatch_contexts;
+          DROP TABLE dispatch_contexts;
+          ALTER TABLE dispatch_contexts_new RENAME TO dispatch_contexts;
+          CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id);
+          CREATE INDEX idx_dispatch_status ON dispatch_contexts(status);
+          CREATE INDEX idx_dispatch_run_status ON dispatch_contexts(run_id, status);
+        `)
       }
       this.createUndeliveredInboxIndexIfPossible()
 
@@ -5292,8 +5343,15 @@ export class OrchestrationDb {
     assigneeHandle: string,
     // Why: pane key is the remint-stable identity behind the handle — lets worker_done ownership survive handle reissue.
     assigneePaneKey?: string,
-    launchTokenHash?: string
+    launchTokenHashOrIdentity?:
+      | string
+      | { requestedAgent: string | null; baseAgent: string | null },
+    identityOverride?: { requestedAgent: string | null; baseAgent: string | null }
   ): DispatchContextRow {
+    const launchTokenHash =
+      typeof launchTokenHashOrIdentity === 'string' ? launchTokenHashOrIdentity : undefined
+    const identity =
+      typeof launchTokenHashOrIdentity === 'object' ? launchTokenHashOrIdentity : identityOverride
     const task = this.getTask(taskId)
     if (!task) {
       throw new Error(`Task not found: ${taskId}`)
@@ -5322,8 +5380,9 @@ export class OrchestrationDb {
       .prepare(
         `INSERT INTO dispatch_contexts (
            id, run_id, task_id, contract_version, launch_token_hash,
-           assignee_handle, assignee_pane_key, status, failure_count, dispatched_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now'))`
+           assignee_handle, assignee_pane_key, status, failure_count, dispatched_at,
+           requested_agent, base_agent
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now'), ?, ?)`
       )
       .run(
         id,
@@ -5333,7 +5392,9 @@ export class OrchestrationDb {
         launchTokenHash ?? null,
         assigneeHandle,
         assigneePaneKey ?? null,
-        priorFailures
+        priorFailures,
+        identity?.requestedAgent ?? null,
+        identity?.baseAgent ?? null
       )
     this.hasAnyDispatchContextsCache = true
 
@@ -5679,7 +5740,14 @@ export class OrchestrationDb {
       .all(thresholdIso, thresholdIso) as DispatchContextRow[]
   }
 
-  failDispatch(ctxId: string, error: string): DispatchContextRow | undefined {
+  failDispatch(
+    ctxId: string,
+    error: string,
+    // U6: optional additive structured launch failure. The generic `error`
+    // string is always retained (last_failure) for old readers; the JSON column
+    // carries the code+hint recovery contract for U6 readers.
+    launchFailure?: PersistedAgentLaunchFailure
+  ): DispatchContextRow | undefined {
     const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow
       | undefined
@@ -5694,10 +5762,17 @@ export class OrchestrationDb {
       .prepare(
         `UPDATE dispatch_contexts
          SET status = ?, failure_count = ?, last_failure = ?,
+             agent_launch_failure = ?,
              capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
          WHERE id = ?`
       )
-      .run(newStatus, newFailureCount, error, ctxId)
+      .run(
+        newStatus,
+        newFailureCount,
+        error,
+        launchFailure ? JSON.stringify(launchFailure) : (ctx.agent_launch_failure ?? null),
+        ctxId
+      )
 
     // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
     const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
@@ -5706,6 +5781,76 @@ export class OrchestrationDb {
     return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow
       | undefined
+  }
+
+  // U6: owner-authorized Forget of a dispatch stranded while liveness is unknown.
+  // The dispatch is kept 'dispatched' while liveness is unknown; forgetting it
+  // settles the terminal 'forgotten' disposition and moves the task to 'blocked'
+  // (not 'ready') because the old remote process may still exist — an explicit
+  // Retry is required. Never spawns/kills. Valid only from 'dispatched'.
+  forgetDispatch(ctxId: string): DispatchContextRow | undefined {
+    const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+    if (!ctx || ctx.status !== 'dispatched') {
+      return undefined
+    }
+    this.db.prepare("UPDATE dispatch_contexts SET status = 'forgotten' WHERE id = ?").run(ctxId)
+    this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(ctx.task_id)
+    return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+  }
+
+  // U6: reconcile settled the dispatch's launch as live — clear the structured
+  // launch failure card while keeping the dispatch 'dispatched'. Never touches
+  // status/failure_count/task (the dispatch is proceeding). The generic
+  // last_failure string is left as-is for old readers.
+  clearDispatchLaunchFailure(ctxId: string): DispatchContextRow | undefined {
+    const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+    if (!ctx) {
+      return undefined
+    }
+    this.db
+      .prepare('UPDATE dispatch_contexts SET agent_launch_failure = NULL WHERE id = ?')
+      .run(ctxId)
+    return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+  }
+
+  // U6: reconcile could not reach the dispatch's host — write the structured
+  // launch_state_unknown card WITHOUT settling. The dispatch stays 'dispatched'
+  // and the task is untouched (coexistence rule): only an explicit Forget or a
+  // later reconnect proof resolves it. No failure_count increment.
+  markDispatchLaunchUnknown(
+    ctxId: string,
+    failure: PersistedAgentLaunchFailure
+  ): DispatchContextRow | undefined {
+    const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+    if (!ctx) {
+      return undefined
+    }
+    this.db
+      .prepare('UPDATE dispatch_contexts SET agent_launch_failure = ? WHERE id = ?')
+      .run(JSON.stringify(failure), ctxId)
+    return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+      | DispatchContextRow
+      | undefined
+  }
+
+  // U6: requested identities across all dispatch rows, for the tombstone
+  // reference index's `orchestration` owner (§217). A dispatch that recorded a
+  // custom id keeps that id's tombstone retained until the row is pruned.
+  referencedRequestedAgents(): string[] {
+    const rows = this.db
+      .prepare('SELECT requested_agent FROM dispatch_contexts WHERE requested_agent IS NOT NULL')
+      .all() as { requested_agent: string }[]
+    return rows.map((row) => row.requested_agent)
   }
 
   // ── Decision Gates ──
