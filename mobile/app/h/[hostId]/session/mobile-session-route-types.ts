@@ -8,6 +8,7 @@ import type {
 import type { TerminalRecord } from '../../../../src/session/mobile-terminal-records'
 import type { DiffComment, TuiAgent } from '../../../../../src/shared/types'
 import type { AgentStatusEntry } from '../../../../../src/shared/agent-status-types'
+import type { PersistedLaunchNoticeState } from '../../../../../src/shared/agent-launch-contract'
 
 export type Terminal = TerminalRecord
 
@@ -28,6 +29,8 @@ export type MobileSessionTab =
       launchAgent?: TuiAgent
       /** Host-provided launch context still parked as an unsent TUI-input draft. */
       launchDraft?: string
+      // Host-owned launch notices + dismissal token mirrored from the snapshot.
+      launchNotices?: PersistedLaunchNoticeState
       terminalTheme?: MobileTerminalTheme
       isActive: boolean
     }
