@@ -1289,6 +1289,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           ...(session.terminalHandle ? { terminalHandle: session.terminalHandle } : {}),
           ...(session.wslDistro !== undefined ? { wslDistro: session.wslDistro } : {}),
           ...this.validatedAgentSessionOwners(session.agentSessionOwners),
+          // Crash reconciliation rejoins daemon-surviving terminals by launch token.
           ...(session.launchToken ? { launchToken: session.launchToken } : {})
         })
       )
