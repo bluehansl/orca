@@ -866,11 +866,9 @@ function isRuntimeRpcError(error: unknown, expectedCode: string): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return (
     message === expectedCode ||
-    message.includes(expectedCode) ||
     code === expectedCode ||
     responseCode === expectedCode ||
-    responseMessage === expectedCode ||
-    String(error).includes(expectedCode)
+    responseMessage === expectedCode
   )
 }
 
