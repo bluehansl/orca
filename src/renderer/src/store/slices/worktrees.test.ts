@@ -107,6 +107,7 @@ const mockApi = {
     cancelListDetected: vi.fn().mockResolvedValue(undefined),
     listLineage: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue(undefined),
+    forgetLocal: vi.fn().mockResolvedValue({}),
     forceDeletePreservedBranch: vi.fn().mockResolvedValue({ deleted: true }),
     resolvePrBase: vi.fn(),
     resolveMrBase: vi.fn(),
@@ -5030,6 +5031,38 @@ describe('worktree remote runtime mutations', () => {
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
     expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
   })
+
+  it.each(['repo_not_found', 'selector_not_found'])(
+    'forgets a mirrored row when the remote returns %s',
+    async (errorCode) => {
+      const store = createTestStore()
+      const wt = makeWorktree({
+        id: 'repo-gone::/path/stale',
+        repoId: 'repo-gone',
+        path: '/path/stale',
+        hostId: 'runtime:env-1'
+      })
+      runtimeEnvironmentCall.mockResolvedValue({
+        id: 'rpc-rm',
+        ok: false,
+        error: { code: errorCode, message: errorCode },
+        _meta: { runtimeId: 'runtime-remote' }
+      })
+      store.setState({
+        settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+        worktreesByRepo: { 'repo-gone': [wt] }
+      } as Partial<AppState>)
+
+      const result = await store.getState().removeWorktree(wt.id)
+
+      expect(result).toEqual({ ok: true })
+      expect(mockApi.worktrees.forgetLocal).toHaveBeenCalledWith({
+        worktreeId: wt.id,
+        hostId: 'runtime:env-1'
+      })
+      expect(store.getState().worktreesByRepo['repo-gone']).toEqual([])
+    }
+  )
 
   it('removes SSH-owned worktrees through local IPC even when a runtime is focused', async () => {
     const store = createTestStore()

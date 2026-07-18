@@ -841,12 +841,12 @@ function getFolderWorkspaceMetaUpdates(
   return next
 }
 
-function isRuntimeSelectorNotFoundError(error: unknown): boolean {
+function isRuntimeRpcError(error: unknown, expectedCode: string): boolean {
   if (
     error &&
     typeof error === 'object' &&
     'cause' in error &&
-    isRuntimeSelectorNotFoundError((error as { cause?: unknown }).cause)
+    isRuntimeRpcError((error as { cause?: unknown }).cause, expectedCode)
   ) {
     return true
   }
@@ -857,31 +857,29 @@ function isRuntimeSelectorNotFoundError(error: unknown): boolean {
     typeof (error as { code: unknown }).code === 'string'
       ? (error as { code: string }).code
       : null
-  const responseCode =
-    error &&
-    typeof error === 'object' &&
-    'response' in error &&
-    typeof (error as { response?: { error?: { code?: unknown } } }).response?.error?.code ===
-      'string'
-      ? (error as { response: { error: { code: string } } }).response.error.code
-      : null
-  const responseMessage =
-    error &&
-    typeof error === 'object' &&
-    'response' in error &&
-    typeof (error as { response?: { error?: { message?: unknown } } }).response?.error?.message ===
-      'string'
-      ? (error as { response: { error: { message: string } } }).response.error.message
-      : null
+  const responseError =
+    error && typeof error === 'object' && 'response' in error
+      ? (error as { response?: { error?: { code?: unknown; message?: unknown } } }).response?.error
+      : undefined
+  const responseCode = typeof responseError?.code === 'string' ? responseError.code : null
+  const responseMessage = typeof responseError?.message === 'string' ? responseError.message : null
   const message = error instanceof Error ? error.message : String(error)
   return (
-    message === 'selector_not_found' ||
-    message.includes('selector_not_found') ||
-    code === 'selector_not_found' ||
-    responseCode === 'selector_not_found' ||
-    responseMessage === 'selector_not_found' ||
-    String(error).includes('selector_not_found')
+    message === expectedCode ||
+    message.includes(expectedCode) ||
+    code === expectedCode ||
+    responseCode === expectedCode ||
+    responseMessage === expectedCode ||
+    String(error).includes(expectedCode)
   )
+}
+
+function isRuntimeSelectorNotFoundError(error: unknown): boolean {
+  return isRuntimeRpcError(error, 'selector_not_found')
+}
+
+function isRuntimeRepoNotFoundError(error: unknown): boolean {
+  return isRuntimeRpcError(error, 'repo_not_found')
 }
 
 function replaceWorktreeInRepoLists(
@@ -3801,22 +3799,37 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             ? { ...get().settings, activeRuntimeEnvironmentId: null }
             : { activeRuntimeEnvironmentId: null }
       )
-      const removalResult = await (forgetLocalOnly
-        ? window.api.worktrees.forgetLocal({ worktreeId, hostId })
-        : target.kind === 'local'
-          ? (removalGenerationGuard?.assertCurrent(),
-            window.api.worktrees.remove({ worktreeId, hostId, force, skipArchive }))
-          : (removalGenerationGuard?.assertCurrent(),
-            callRuntimeRpc<RemoveWorktreeResult>(
-              target,
-              'worktree.rm',
-              {
-                worktree: toRuntimeWorktreeSelector(worktreeId),
-                force,
-                runHooks: !skipArchive
-              },
-              { timeoutMs: 60_000 }
-            )))
+      let removalResult: RemoveWorktreeResult
+      try {
+        removalResult = await (forgetLocalOnly
+          ? window.api.worktrees.forgetLocal({ worktreeId, hostId })
+          : target.kind === 'local'
+            ? (removalGenerationGuard?.assertCurrent(),
+              window.api.worktrees.remove({ worktreeId, hostId, force, skipArchive }))
+            : (removalGenerationGuard?.assertCurrent(),
+              callRuntimeRpc<RemoveWorktreeResult>(
+                target,
+                'worktree.rm',
+                {
+                  worktree: toRuntimeWorktreeSelector(worktreeId),
+                  force,
+                  runHooks: !skipArchive
+                },
+                { timeoutMs: 60_000 }
+              )))
+      } catch (error) {
+        if (
+          !forgetLocalOnly &&
+          target.kind !== 'local' &&
+          (isRuntimeRepoNotFoundError(error) || isRuntimeSelectorNotFoundError(error))
+        ) {
+          // The remote project/workspace is authoritative and already gone. Finish
+          // by dropping this client's orphaned metadata instead of trapping the row.
+          removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
+        } else {
+          throw error
+        }
+      }
 
       // Why: invalidate stale probes once deletion is authoritative, so an old toast can't mutate a same-path replacement.
       forgetHugeRepoWarningDismissalsForWorktrees([worktreeId])

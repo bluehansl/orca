@@ -5798,6 +5798,14 @@ export class Store {
     this.setHostWorkspaceSession(resolved, session)
   }
 
+  removeWorkspaceSessionStateForWorktree(worktreeId: string, hostId?: string | null): void {
+    const session = removeWorkspaceSessionOwner(this.getWorkspaceSession(hostId), worktreeId)
+    if (session) {
+      // Host scoping matters because identical repo/path ids may exist on two servers.
+      this.setWorkspaceSession(session, hostId)
+    }
+  }
+
   /** Persist a non-'local' host partition; remote hosts skip setLocalWorkspaceSession's local-daemon PTY-binding race guards. */
   private setHostWorkspaceSession(hostId: ExecutionHostId, session: WorkspaceSessionState): void {
     // Why: each partition owns its topology fence; renderer writes omit it and must rebase locally.

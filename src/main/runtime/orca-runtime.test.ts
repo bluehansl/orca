@@ -39108,6 +39108,30 @@ describe('OrcaRuntimeService', () => {
     expect(removeWorktreeLinkedPathsMock).toHaveBeenCalledWith(TEST_WORKTREE_PATH, ['node_modules'])
   })
 
+  it('forgets exact-id orphan metadata when the parent repo is already gone', async () => {
+    const { runtimeStore, removeWorktreeMeta } = createStaleRuntimeWorktreeStore(TEST_WORKTREE_ID, {
+      hostId: 'runtime:env-1'
+    })
+    const removeWorkspaceSessionStateForWorktree = vi.fn()
+    const orphanStore = {
+      ...runtimeStore,
+      getRepos: () => [],
+      getRepo: () => undefined,
+      removeWorkspaceSessionStateForWorktree
+    }
+    const runtime = createWorktreeRemovalRuntime(orphanStore)
+
+    await expect(runtime.removeManagedWorktree(TEST_WORKTREE_ID)).resolves.toEqual({})
+
+    expect(removeWorktreeMeta).toHaveBeenCalledWith(TEST_WORKTREE_ID)
+    expect(removeWorkspaceSessionStateForWorktree).toHaveBeenCalledWith(
+      TEST_WORKTREE_ID,
+      'runtime:env-1'
+    )
+    expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(TEST_WORKTREE_ID)
+    expect(removeWorktree).not.toHaveBeenCalled()
+  })
+
   it('does not remove a runtime worktree when watcher teardown cannot release it', async () => {
     const repo = { ...store.getRepos()[0], symlinkPaths: ['node_modules'] }
     const runtimeStore = { ...store, getRepos: () => [repo], getRepo: () => repo }

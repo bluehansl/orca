@@ -2717,13 +2717,10 @@ export function registerWorktreeHandlers(
     ): Promise<RemoveWorktreeResult> => {
       const { repoId } = parseWorktreeId(args.worktreeId)
       const repo = getRepoForWorktreeRemoval(store, repoId, args.hostId)
-      if (!repo) {
-        throw new Error(`Repo not found: ${repoId}`)
-      }
-      // Why: share the removal in-flight map so concurrent remove and forgetLocal on the same id can't both mutate metadata.
+      // Why: metadata-only cleanup must work after the owning project disappears.
       const inFlightKey = getWorktreeRemovalInFlightKey(
         args.worktreeId,
-        getRepoExecutionHostId(repo)
+        repo ? getRepoExecutionHostId(repo) : args.hostId
       )
       const optionsKey = 'forget-local'
       const inFlight = worktreeRemovalsInFlight.get(inFlightKey)
@@ -2735,7 +2732,7 @@ export function registerWorktreeHandlers(
       }
 
       const forget = (async (): Promise<RemoveWorktreeResult> => {
-        if (isFolderRepo(repo) && args.worktreeId === getFolderWorkspaceRootId(repo)) {
+        if (repo && isFolderRepo(repo) && args.worktreeId === getFolderWorkspaceRootId(repo)) {
           throw new Error(
             'Cannot delete the project root workspace. Remove the folder project instead.'
           )
@@ -2752,6 +2749,7 @@ export function registerWorktreeHandlers(
 
         runtime.clearOptimisticReconcileToken(args.worktreeId)
         removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+        store.removeWorkspaceSessionStateForWorktree(args.worktreeId, args.hostId)
         preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
         notifyWorktreesChanged(mainWindow, repoId)
         return {}

@@ -11195,6 +11195,34 @@ describe('Store host-partitioned workspace sessions', () => {
     expect(reloaded.getWorkspaceSession('runtime:env-a').activeRepoId).toBe('repo-a')
   })
 
+  it('removes one orphaned worktree from only its owning host partition', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-gone::/workspace/stale'
+    const session = {
+      ...makeHostSession('repo-gone'),
+      activeWorktreeId: worktreeId,
+      activeWorktreeIdsOnShutdown: [worktreeId],
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 }
+    }
+    store.setWorkspaceSession(session, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'runtime:env-b')
+
+    store.removeWorkspaceSessionStateForWorktree(worktreeId, 'runtime:env-a')
+    store.flush()
+
+    const reloaded = await createStore()
+    expect(reloaded.getWorkspaceSession('runtime:env-a')).toMatchObject({
+      activeWorktreeId: null,
+      activeWorktreeIdsOnShutdown: [],
+      lastVisitedAtByWorktreeId: {}
+    })
+    expect(reloaded.getWorkspaceSession('runtime:env-b')).toMatchObject({
+      activeWorktreeId: worktreeId,
+      activeWorktreeIdsOnShutdown: [worktreeId],
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 }
+    })
+  })
+
   it('drops a corrupt host partition to defaults without failing the others', async () => {
     writeDataFile({
       schemaVersion: 1,

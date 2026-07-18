@@ -302,6 +302,7 @@ describe('registerWorktreeHandlers', () => {
     setWorktreeMeta: vi.fn(),
     getProjectHostSetups: vi.fn(),
     removeWorktreeMeta: vi.fn(),
+    removeWorkspaceSessionStateForWorktree: vi.fn(),
     getAllWorktreeLineage: vi.fn(),
     removeWorktreeLineage: vi.fn(),
     getAllWorkspaceLineage: vi.fn(),
@@ -383,6 +384,7 @@ describe('registerWorktreeHandlers', () => {
       store.setWorktreeMeta,
       store.getProjectHostSetups,
       store.removeWorktreeMeta,
+      store.removeWorkspaceSessionStateForWorktree,
       store.getAllWorktreeLineage,
       store.removeWorktreeLineage,
       store.getAllWorkspaceLineage,
@@ -10103,17 +10105,28 @@ describe('registerWorktreeHandlers', () => {
       expect(removeWorktreeMock).not.toHaveBeenCalled()
     })
 
-    it('throws when the repo is missing', async () => {
+    it('forgets an ownerless workspace after its repo is already gone', async () => {
+      const worktreeId = 'repo-gone::/workspace/feature-wt'
       store.getRepo.mockReturnValue(undefined)
 
       await expect(
         handlers['worktrees:forgetLocal'](null, {
-          worktreeId: 'repo-gone::/workspace/feature-wt'
+          worktreeId,
+          hostId: 'runtime:env-1'
         })
-      ).rejects.toThrow(/Repo not found/)
+      ).resolves.toEqual({})
 
-      expect(store.removeWorktreeMeta).not.toHaveBeenCalled()
+      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
+      expect(store.removeWorkspaceSessionStateForWorktree).toHaveBeenCalledWith(
+        worktreeId,
+        'runtime:env-1'
+      )
+      expect(runtimeStub.clearOptimisticReconcileToken).toHaveBeenCalledWith(worktreeId)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
+        repoId: 'repo-gone'
+      })
       expect(getSshGitProviderMock).not.toHaveBeenCalled()
+      expect(removeWorktreeMock).not.toHaveBeenCalled()
     })
 
     it('rejects forgetting a folder project root', async () => {
