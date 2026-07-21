@@ -19,6 +19,7 @@ const {
   registerComputerUsePermissionHandlersMock,
   registerSettingsHandlersMock,
   registerAgentCatalogHandlersMock,
+  registerDataRecoveryHandlersMock,
   registerKeybindingHandlersMock,
   registerTelemetryHandlersMock,
   registerDiagnosticsHandlersMock,
@@ -85,6 +86,7 @@ const {
   registerComputerUsePermissionHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
   registerAgentCatalogHandlersMock: vi.fn(),
+  registerDataRecoveryHandlersMock: vi.fn(),
   registerKeybindingHandlersMock: vi.fn(),
   registerTelemetryHandlersMock: vi.fn(),
   registerDiagnosticsHandlersMock: vi.fn(),
@@ -226,6 +228,10 @@ vi.mock('./computer-use-permissions', () => ({
 
 vi.mock('./settings', () => ({
   registerSettingsHandlers: registerSettingsHandlersMock
+}))
+
+vi.mock('./data-recovery', () => ({
+  registerDataRecoveryHandlers: registerDataRecoveryHandlersMock
 }))
 
 vi.mock('./agent-catalog', () => ({
@@ -529,6 +535,7 @@ describe('registerCoreHandlers', () => {
     expect(registerTerminalPreviewHandlersMock).toHaveBeenCalledWith(runtime)
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store, agentAwakeService)
     expect(registerAgentCatalogHandlersMock).toHaveBeenCalledWith(store)
+    expect(registerDataRecoveryHandlersMock).toHaveBeenCalledWith(store)
     expect(registerSkillsHandlersMock).toHaveBeenCalledWith(store)
     expect(registerWorkspaceSpaceHandlersMock).toHaveBeenCalledWith(store)
     expect(registerWorkspacePortHandlersMock).toHaveBeenCalledWith(store)

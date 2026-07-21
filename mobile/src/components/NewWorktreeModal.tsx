@@ -29,6 +29,7 @@ import {
   type SetupHookTrust
 } from '../tasks/setup-hook-trust'
 import { isMobileTuiAgentEnabled } from '../tasks/mobile-tui-agents'
+import { hostAgentCatalogReadOnlyNotice } from '../tasks/mobile-agent-catalog-projection'
 import { hostSupportsAgentLaunchIdentity } from '../session/agent-launch-identity-capability'
 import { buildInteractiveLaunchParams } from './interactive-worktree-launch-params'
 import type { PersistedTrustedOrcaHooks, TuiAgent } from '../../../src/shared/types'
@@ -1064,6 +1065,7 @@ function NewWorktreeModalContent({
       <PickerListDrawer
         visible={visible && drawerView === 'agent'}
         title="Agent"
+        subtitle={hostAgentCatalogReadOnlyNotice(agentCatalog)}
         items={pickerAgentOptions}
         selectedId={selectedAgent.id}
         onSelect={(agent) => {
