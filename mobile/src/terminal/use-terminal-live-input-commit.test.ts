@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
-import { TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS } from './terminal-live-hangul-mirror'
+import { TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS } from './terminal-live-composition-mirror'
 import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
 
 type TerminalLiveInputCommitHarness = {
@@ -275,6 +275,35 @@ describe('terminal live input commit hook', () => {
 
     // Then
     await vi.waitFor(() => expect(sent).toEqual(['你好']))
+  })
+
+  it('Given a held kana When the settle window passes Then nothing is committed on a timer', async () => {
+    // Given: issue #7427 — a flick modifier can land long after the base kana,
+    // so a settle commit would race the user instead of resolving anything.
+    vi.useFakeTimers()
+    const { handlers, sent } = createTerminalLiveInputCommitHarness()
+    handlers.handleLiveInputChange('つ')
+
+    // When
+    await vi.advanceTimersByTimeAsync(TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS * 10)
+
+    // Then
+    expect(sent).toEqual([])
+  })
+
+  it('Given a held kana replaced by its modifier When submit is requested Then only the modified kana reaches the terminal', async () => {
+    // Given
+    vi.useFakeTimers()
+    const { handlers, sent } = createTerminalLiveInputCommitHarness()
+    handlers.handleLiveInputChange('つ')
+    await vi.advanceTimersByTimeAsync(TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS * 10)
+
+    // When: the flick keyboard's small-kana modifier rewrites the base kana
+    handlers.handleLiveInputChange('っ')
+    handlers.handleLiveInputSubmit()
+
+    // Then: no stale 'つ' and no DEL repair — the base kana never left the app
+    await vi.waitFor(() => expect(sent).toEqual(['っ', '\r']))
   })
 
   it('Given a held syllable When the hook unmounts Then cancels the settle timer', async () => {

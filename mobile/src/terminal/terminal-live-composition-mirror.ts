@@ -13,16 +13,44 @@ export function isTerminalLiveHangulCodePoint(codePoint: number): boolean {
   )
 }
 
+export function isTerminalLiveKanaCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x3041 && codePoint <= 0x309f) ||
+    (codePoint >= 0x30a0 && codePoint <= 0x30ff) ||
+    (codePoint >= 0x31f0 && codePoint <= 0x31ff) ||
+    (codePoint >= 0xff66 && codePoint <= 0xff9f)
+  )
+}
+
+// 'timer' may commit on a settle delay; 'boundary' commits only on a later
+// keystroke or an explicit flush, so its outcome never depends on timing.
+export type TerminalLiveHeldCommitPolicy = 'none' | 'boundary' | 'timer'
+
+// Why: a Japanese flick keyboard mutates the kana already on screen (つ→っ,
+// か→が, は→ぱ), so the base kana stays provisional until the next input. A
+// settle timer cannot resolve that — it only decides how often the modifier
+// arrives too late — so kana holds until a real boundary instead.
+export function getTerminalLiveHeldCommitPolicy(codePoint: number): TerminalLiveHeldCommitPolicy {
+  if (isTerminalLiveHangulCodePoint(codePoint)) {
+    return 'timer'
+  }
+  if (isTerminalLiveKanaCodePoint(codePoint)) {
+    return 'boundary'
+  }
+  return 'none'
+}
+
 export type TerminalLiveMirrorStep = {
   readonly eraseCount: number
   readonly appendText: string
   readonly nextSentText: string
   readonly heldText: string
+  readonly heldCommitPolicy: TerminalLiveHeldCommitPolicy
 }
 
-// Why: React Native exposes no composition events, but Hangul composition only
-// mutates the trailing syllable. Holding just that code point keeps the PTY
-// echo live while preedit jamo never leak; DEL corrections repair any commit
+// Why: React Native exposes no composition events, but Hangul and kana
+// composition only mutate the trailing code point. Holding just that one keeps
+// the PTY echo live while preedit never leaks; DEL corrections repair any commit
 // that later turns out to be premature.
 export function computeTerminalLiveMirrorStep(
   sentText: string,
@@ -31,10 +59,11 @@ export function computeTerminalLiveMirrorStep(
 ): TerminalLiveMirrorStep {
   const fieldCodePoints = Array.from(fieldText)
   const lastCodePoint = fieldCodePoints.at(-1)
-  const holdLast =
-    !options.commitHeld &&
-    lastCodePoint !== undefined &&
-    isTerminalLiveHangulCodePoint(lastCodePoint.codePointAt(0) ?? 0)
+  const heldCommitPolicy =
+    options.commitHeld || lastCodePoint === undefined
+      ? 'none'
+      : getTerminalLiveHeldCommitPolicy(lastCodePoint.codePointAt(0) ?? 0)
+  const holdLast = heldCommitPolicy !== 'none'
   const heldText = holdLast && lastCodePoint !== undefined ? lastCodePoint : ''
   const targetCodePoints = holdLast ? fieldCodePoints.slice(0, -1) : fieldCodePoints
   const sentCodePoints = Array.from(sentText)
@@ -52,7 +81,8 @@ export function computeTerminalLiveMirrorStep(
     eraseCount: sentCodePoints.length - commonPrefixLength,
     appendText: targetCodePoints.slice(commonPrefixLength).join(''),
     nextSentText: targetCodePoints.join(''),
-    heldText
+    heldText,
+    heldCommitPolicy
   }
 }
 

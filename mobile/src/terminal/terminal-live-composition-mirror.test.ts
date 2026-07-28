@@ -3,8 +3,9 @@ import {
   buildTerminalLiveMirrorPayload,
   computeTerminalLiveMirrorStep,
   isTerminalLiveHangulCodePoint,
+  isTerminalLiveKanaCodePoint,
   type TerminalLiveMirrorStep
-} from './terminal-live-hangul-mirror'
+} from './terminal-live-composition-mirror'
 
 type MirrorRun = {
   readonly payloads: readonly string[]
@@ -138,7 +139,8 @@ describe('terminal live hangul mirror', () => {
       eraseCount: 3,
       appendText: '',
       nextSentText: '',
-      heldText: ''
+      heldText: '',
+      heldCommitPolicy: 'none'
     })
     expect(buildTerminalLiveMirrorPayload(step)).toBe('\x7f\x7f\x7f')
   })
@@ -153,7 +155,8 @@ describe('terminal live hangul mirror', () => {
       eraseCount: 0,
       appendText: '',
       nextSentText: '',
-      heldText: ''
+      heldText: '',
+      heldCommitPolicy: 'none'
     })
   })
 
@@ -174,5 +177,77 @@ describe('terminal live hangul mirror', () => {
     expect(isTerminalLiveHangulCodePoint('한'.codePointAt(0) ?? 0)).toBe(true)
     expect(isTerminalLiveHangulCodePoint('a'.codePointAt(0) ?? 0)).toBe(false)
     expect(isTerminalLiveHangulCodePoint('あ'.codePointAt(0) ?? 0)).toBe(false)
+  })
+})
+
+describe('terminal live kana composition mirror', () => {
+  // Issue #7427: a Japanese flick keyboard replaces the kana already on screen,
+  // so forwarding the base kana lands a character the user never committed.
+  it.each([
+    ['small kana', 'つ', 'っ'],
+    ['dakuten', 'か', 'が'],
+    ['handakuten', 'は', 'ぱ']
+  ])(
+    'Given %s composition When the modifier replaces the base kana Then only the result is sent',
+    (_label, baseKana, modifiedKana) => {
+      // Given / When
+      const run = runMirrorSequence([baseKana, modifiedKana], { commitAtEnd: true })
+
+      // Then: the provisional base kana never reached the PTY, so no DEL repair
+      expect(run.payloads).toEqual([modifiedKana])
+      expect(run.sentText).toBe(modifiedKana)
+    }
+  )
+
+  it('Given flick kana composition When syllables accumulate Then streams the stable prefix and holds the trailing kana', () => {
+    // Given / When
+    const run = runMirrorSequence(['こ', 'こん', 'こんに', 'こんにち', 'こんにちは'])
+
+    // Then
+    expect(run.payloads).toEqual(['こ', 'ん', 'に', 'ち'])
+    expect(run.heldText).toBe('は')
+  })
+
+  it('Given a held kana When the field commits Then the mirror emits the full text once', () => {
+    // Given / When
+    const run = runMirrorSequence(['こ', 'こん', 'こんに', 'こんにち', 'こんにちは'], {
+      commitAtEnd: true
+    })
+
+    // Then
+    expect(run.payloads.join('')).toBe('こんにちは')
+    expect(run.heldText).toBe('')
+  })
+
+  it('Given kana and Hangul holds When policies are read Then only Hangul may commit on the settle timer', () => {
+    // Given / When
+    const kana = computeTerminalLiveMirrorStep('', 'つ', { commitHeld: false })
+    const hangul = computeTerminalLiveMirrorStep('', '한', { commitHeld: false })
+    const ascii = computeTerminalLiveMirrorStep('', 'a', { commitHeld: false })
+
+    // Then
+    expect(kana.heldCommitPolicy).toBe('boundary')
+    expect(hangul.heldCommitPolicy).toBe('timer')
+    expect(ascii.heldCommitPolicy).toBe('none')
+  })
+
+  it('Given romaji conversion output When the step runs Then kanji commits immediately instead of being held', () => {
+    // Given: 'にほんご' was mirrored, then the IME converted it
+    const step = computeTerminalLiveMirrorStep('にほんご', '日本語', { commitHeld: false })
+
+    // Then: conversion output is final, so nothing is held back
+    expect(buildTerminalLiveMirrorPayload(step)).toBe('\x7f\x7f\x7f\x7f日本語')
+    expect(step.heldText).toBe('')
+    expect(step.heldCommitPolicy).toBe('none')
+  })
+
+  it('Given kana code point ranges When checked Then hiragana, katakana and halfwidth katakana match', () => {
+    expect(isTerminalLiveKanaCodePoint('あ'.codePointAt(0) ?? 0)).toBe(true)
+    expect(isTerminalLiveKanaCodePoint('ッ'.codePointAt(0) ?? 0)).toBe(true)
+    expect(isTerminalLiveKanaCodePoint('ー'.codePointAt(0) ?? 0)).toBe(true)
+    expect(isTerminalLiveKanaCodePoint('ｶ'.codePointAt(0) ?? 0)).toBe(true)
+    expect(isTerminalLiveKanaCodePoint('語'.codePointAt(0) ?? 0)).toBe(false)
+    expect(isTerminalLiveKanaCodePoint('a'.codePointAt(0) ?? 0)).toBe(false)
+    expect(isTerminalLiveKanaCodePoint('한'.codePointAt(0) ?? 0)).toBe(false)
   })
 })

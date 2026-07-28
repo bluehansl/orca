@@ -5,7 +5,7 @@ import {
   buildTerminalLiveMirrorPayload,
   computeTerminalLiveMirrorStep,
   TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS
-} from './terminal-live-hangul-mirror'
+} from './terminal-live-composition-mirror'
 import {
   queueTerminalLiveMirrorSend,
   waitForTerminalLivePendingFlush
@@ -95,7 +95,10 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         step.heldText.length > 0 || step.nextSentText.length > 0 ? handle : null
 
       clearHeldCommitTimer()
-      if (step.heldText.length > 0) {
+      // Why: a 'boundary' hold is released by the next keystroke or an explicit
+      // flush only. Arming a settle timer for it would race the flick keyboard's
+      // modifier key and commit the base kana the user is about to replace.
+      if (step.heldText.length > 0 && step.heldCommitPolicy === 'timer') {
         heldCommitTimerRef.current = setTimeout(() => {
           heldCommitTimerRef.current = null
           const heldField = sentLiveInputTextRef.current + heldLiveInputTextRef.current
