@@ -40,12 +40,28 @@ export class JiraCancellableRequests {
     if (!id) {
       return
     }
+    this.pruneExpiredTombstones()
     const live = this.controllers.get(id)
     if (live) {
       live.abort()
       return
     }
+    // Re-delete first: Map.set keeps an existing key's original position, which would
+    // strand a stale expiry ahead of newer ones and stall the front-to-back sweep.
+    this.cancelTombstones.delete(id)
     this.cancelTombstones.set(id, Date.now() + CANCEL_TOMBSTONE_TTL_MS)
+  }
+
+  // Why: a cancel whose run() never arrives would otherwise leak its tombstone forever.
+  // Expiries only increase and Map keeps insertion order, so stop at the first live entry.
+  private pruneExpiredTombstones(): void {
+    const now = Date.now()
+    for (const [id, expiresAt] of this.cancelTombstones) {
+      if (expiresAt > now) {
+        break
+      }
+      this.cancelTombstones.delete(id)
+    }
   }
 
   private consumeCancelTombstone(id: string): boolean {

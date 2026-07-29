@@ -47,7 +47,7 @@ import {
   WorktreeCardMetaBadges,
   type WorktreeCardIssueDisplay
 } from './WorktreeCardMeta'
-import { getConfiguredWorktreeCardJiraIssueDisplay } from './worktree-card-jira-issue-display'
+import { getWorktreeCardJiraIssueDisplay } from './worktree-card-jira-issue-display'
 import { WorktreeCardPortsDetails, WorktreeCardPortsTrigger } from './WorktreeCardPorts'
 import { writeWorkspaceDragData } from './workspace-status'
 import {
@@ -619,7 +619,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
           url: linearIssueUrlFallback
         }
     : null
-  const jiraIssueDisplay = getConfiguredWorktreeCardJiraIssueDisplay(worktree, cardProps)
+  const jiraIssueDisplay = getWorktreeCardJiraIssueDisplay(worktree)
   const cardTitleDisplay = getWorktreeCardTitleDisplay({
     storedDisplayName: worktree.displayName,
     branchName: branch,
@@ -640,6 +640,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const showStatus = cardProps.includes('status')
   const showIssue = cardProps.includes('issue')
   const showLinearIssue = cardProps.includes('linear-issue')
+  const showJiraIssue = cardProps.includes('jira-issue')
   const showPR = cardProps.includes('pr')
   const showAutomation = cardProps.includes('automation')
   const showCli = cardProps.includes('cli')
@@ -1058,7 +1059,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const hoverComment = worktree.comment
   const metaIssue = showIssue ? hoverIssue : null
   const metaLinearIssue = showLinearIssue ? hoverLinearIssue : null
-  const metaJiraIssue = hoverJiraIssue
+  const metaJiraIssue = showJiraIssue ? hoverJiraIssue : null
   const metaReview = showPR ? hoverReview : null
   const metaAutomationProvenance = showAutomation ? worktree.automationProvenance : null
   const metaCliProvenance = showCli ? worktree.cliProvenance : null

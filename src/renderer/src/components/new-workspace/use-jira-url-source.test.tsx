@@ -153,6 +153,8 @@ describe('useJiraUrlSource', () => {
     const context = sourceContext()
     const loaded = { status: status([site('site-a')], 'site-a'), loaded: true }
     mocks.lookupJiraIssueSummary.mockResolvedValue(issue('ORCA-1'))
+    // Explicit: clearAllMocks keeps prior implementations, so the retry read must be this test's.
+    mocks.readJiraStatus.mockResolvedValue(status([site('site-a')], 'site-a'))
     const { result } = renderHook(() =>
       useJiraUrlSource({
         value: 'https://company.atlassian.net/browse/ORCA-1',
@@ -172,6 +174,7 @@ describe('useJiraUrlSource', () => {
 
     // A forced retry still needs a fresh read — the cached answer is what failed.
     expect(mocks.readJiraStatus).toHaveBeenCalledTimes(1)
+    expect(result.current.issue?.key).toBe('ORCA-1')
   })
 
   it('re-reads status when the loaded connection has no sites to match', async () => {

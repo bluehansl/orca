@@ -3164,10 +3164,19 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       const suggestedName =
         getLinkedWorkItemWorkspaceName(linkedItem)?.seedName ??
         getLinkedWorkItemSuggestedName(linkedItem)
-      setName(suggestedName)
-      lastAutoNameRef.current = suggestedName
+      // Why: the Jira lookup is async, so a name the user typed while it resolved must survive.
+      if (
+        suggestedName &&
+        shouldApplyWorkspaceSourceAutoName({
+          currentName: name,
+          lastAutoName: lastAutoNameRef.current
+        })
+      ) {
+        setName(suggestedName)
+        lastAutoNameRef.current = suggestedName
+      }
     },
-    []
+    [name]
   )
 
   const handleClearSmartNameSelection = useCallback((): void => {

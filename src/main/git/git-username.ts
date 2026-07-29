@@ -43,9 +43,24 @@ export function isPlausibleHostedLogin(value: string): boolean {
   )
 }
 
+/**
+ * Provider-agnostic branch-safe token: GitLab/Bitbucket/self-hosted logins may
+ * carry `_`/`.` and run longer than GitHub's 39-char limit, so the strict
+ * GitHub rule must not gate explicitly configured usernames.
+ */
+export function isBranchSafeHostedLogin(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)
+}
+
 function normalizeHostedLogin(value: string): string {
   const normalized = normalizeGitUsername(value)
   return normalized && isPlausibleHostedLogin(normalized) ? normalized : ''
+}
+
+/** Explicit `github.user`/`user.username` config is provider-agnostic; only reject non-tokens. */
+function normalizeConfiguredLogin(value: string): string {
+  const normalized = normalizeGitUsername(value)
+  return normalized && isBranchSafeHostedLogin(normalized) ? normalized : ''
 }
 
 /**
@@ -64,7 +79,7 @@ export async function getSshGitUsername(
   for (const key of EXPLICIT_USERNAME_CONFIG_KEYS) {
     try {
       const { stdout } = await provider.exec(['config', '--get', key], repoPath)
-      const username = normalizeHostedLogin(stdout)
+      const username = normalizeConfiguredLogin(stdout)
       if (username) {
         return username
       }
@@ -289,7 +304,7 @@ export async function resolveLocalGitUsernameDetailed(
         timeout: LOCAL_GIT_READ_TIMEOUT_MS
       })
       // Why: config can hold free-form strings; only branch-safe logins become prefixes.
-      const username = normalizeHostedLogin(stdout)
+      const username = normalizeConfiguredLogin(stdout)
       if (username) {
         return { username, authoritative: true }
       }

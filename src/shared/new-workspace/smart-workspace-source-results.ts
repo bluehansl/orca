@@ -7,7 +7,7 @@ import type {
   LinearIssue
 } from '../types'
 import { isClipboardTextByteLengthOverLimit } from '../clipboard-text'
-import { parseJiraIssueUrl } from '../jira-issue-url'
+import { JIRA_ISSUE_KEY_PATTERN, parseJiraIssueUrl } from '../jira-issue-url'
 
 export type SmartNameMode = 'smart' | 'github' | 'gitlab' | 'branches' | 'linear' | 'jira' | 'text'
 
@@ -50,7 +50,7 @@ export function buildJiraIssueSearchJql(query: string): string | null {
   if (!trimmed || !isSmartWorkspaceSourceQueryWithinLimit(trimmed)) {
     return null
   }
-  if (/^[a-z][a-z0-9_]*-\d+$/i.test(trimmed)) {
+  if (JIRA_ISSUE_KEY_PATTERN.test(trimmed)) {
     return `key = "${trimmed.toUpperCase()}"`
   }
   const escaped = trimmed.replaceAll('\\', '\\\\').replaceAll('"', '\\"')

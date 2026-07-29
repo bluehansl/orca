@@ -70,7 +70,9 @@ const ISSUE_LIST_FIELDS = ISSUE_FIELDS.filter((field) => field !== 'description'
 // Why: detail reads need attachment metadata so inline ADF media can be resolved
 // to downloadable image content; list/search omit this for payload size.
 const ISSUE_DETAIL_FIELDS = [...ISSUE_FIELDS, 'attachment']
-const ISSUE_SUMMARY_FIELDS = ['summary', 'project', 'issuetype', 'status']
+// `created`/`updated` are required: mapJiraIssue falls back to "now" when they're absent,
+// which would silently report the lookup time as the issue's timestamps.
+const ISSUE_SUMMARY_FIELDS = ['summary', 'project', 'issuetype', 'status', 'created', 'updated']
 const ISSUE_SUMMARY_TIMEOUT_MS = 30_000
 const ISSUE_SEARCH_TIMEOUT_MS = 30_000
 

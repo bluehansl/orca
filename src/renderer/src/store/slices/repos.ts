@@ -2265,6 +2265,18 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     const runtimeEnvironmentId = getRuntimeEnvironmentIdForFolderWorkspace(state, folderWorkspaceId)
     // Why: owner-scoped mutations must not follow whichever runtime happens to be focused.
     const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId })
+    // Why: same gate as folderWorkspace.create — an older paired runtime would drop the Jira link silently.
+    if (
+      target.kind === 'environment' &&
+      (updates.linkedTask?.provider === 'jira' ||
+        updates.linkedTaskSourceContext?.provider === 'jira')
+    ) {
+      await assertRuntimeEnvironmentCapability(
+        target.environmentId,
+        WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY,
+        'Update the remote runtime to link Jira'
+      )
+    }
     const updateTicket = folderWorkspaceUpdates.begin(
       folderWorkspaceId,
       Object.keys(updates) as FolderWorkspaceUpdateField[]

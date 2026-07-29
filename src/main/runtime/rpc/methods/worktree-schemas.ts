@@ -71,6 +71,26 @@ export const WorktreeActivate = WorktreeSelector.extend({
   navigation: z.enum(RUNTIME_NAVIGATION_TARGETS).optional()
 })
 
+/** Shared by WorktreeCreate and WorktreeSet so the two error messages cannot drift. */
+function assertLinkedWorkItemSourceContextMatch(
+  params: {
+    linkedWorkItem?: z.infer<typeof WorkspaceLinkedItemSchema> | null
+    linkedTaskSourceContext?: z.infer<typeof TaskSourceContextSchema> | null
+  },
+  ctx: z.RefinementCtx
+): void {
+  if (
+    params.linkedWorkItem &&
+    params.linkedTaskSourceContext &&
+    !isWorkspaceLinkedItemSourceContextMatch(params.linkedWorkItem, params.linkedTaskSourceContext)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Linked work item and source context identities must match'
+    })
+  }
+}
+
 export const WorktreeCreate = z
   .object({
     repo: z
@@ -165,19 +185,7 @@ export const WorktreeCreate = z
     cliProvenanceRequest: CliWorkspaceProvenanceRequest.optional()
   })
   .superRefine((params, ctx) => {
-    if (
-      params.linkedWorkItem &&
-      params.linkedTaskSourceContext &&
-      !isWorkspaceLinkedItemSourceContextMatch(
-        params.linkedWorkItem,
-        params.linkedTaskSourceContext
-      )
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Linked work item and source context identities must match'
-      })
-    }
+    assertLinkedWorkItemSourceContextMatch(params, ctx)
     if ((params.parentWorkspace || params.parentWorktree) && params.noParent === true) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -251,16 +259,7 @@ export const WorktreeSet = WorktreeSelector.extend({
   parentWorktree: OptionalString,
   noParent: OptionalBoolean
 }).superRefine((params, ctx) => {
-  if (
-    params.linkedWorkItem &&
-    params.linkedTaskSourceContext &&
-    !isWorkspaceLinkedItemSourceContextMatch(params.linkedWorkItem, params.linkedTaskSourceContext)
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Linked work item and source context identities must match'
-    })
-  }
+  assertLinkedWorkItemSourceContextMatch(params, ctx)
   if (params.parentWorktree && params.noParent === true) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

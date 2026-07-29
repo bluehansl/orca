@@ -124,26 +124,24 @@ describe('Jira issue operations', () => {
         summary: 'Lightweight lookup',
         project: { id: '10000', key: 'ALP', name: 'Alpha' },
         issuetype: { id: '10001', name: 'Bug' },
-        status: {
-          id: '1',
-          name: 'To Do',
-          statusCategory: { key: 'new', name: 'To Do' }
-        },
+        status: { id: '1', name: 'To Do', statusCategory: { key: 'new', name: 'To Do' } },
         labels: [],
         created: '2026-07-27T00:00:00.000Z',
-        updated: '2026-07-27T00:00:00.000Z'
+        updated: '2026-07-28T11:22:33.000Z'
       }
     })
     const { getIssueSummary } = await import('./issues')
     await expect(getIssueSummary('ALP-1', 'site-1')).resolves.toMatchObject({
       key: 'ALP-1',
       title: 'Lightweight lookup',
-      siteId: 'site-1'
+      siteId: 'site-1',
+      createdAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: '2026-07-28T11:22:33.000Z'
     })
     const requestPath = String(jiraRequestMock.mock.calls[0]?.[1])
     const query = new URL(requestPath, 'https://example.atlassian.net').searchParams
     const fields = query.get('fields')?.split(',') ?? []
-    expect(fields).toEqual(['summary', 'project', 'issuetype', 'status'])
+    expect(fields).toEqual(['summary', 'project', 'issuetype', 'status', 'created', 'updated'])
     expect(query.has('expand')).toBe(false)
     expect(jiraRequestBinaryMock).not.toHaveBeenCalled()
     expect(clearTokenMock).not.toHaveBeenCalled()

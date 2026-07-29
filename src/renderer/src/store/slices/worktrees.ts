@@ -1619,6 +1619,18 @@ async function persistWorktreeMeta(
     await window.api.worktrees.updateMeta({ worktreeId, updates })
     return
   }
+  // Why: same gate as worktree.create — an older paired runtime would drop the Jira link silently.
+  if (
+    target.kind === 'environment' &&
+    (updates.linkedWorkItem?.provider === 'jira' ||
+      updates.linkedTaskSourceContext?.provider === 'jira')
+  ) {
+    await assertRuntimeEnvironmentCapability(
+      target.environmentId,
+      WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY,
+      'Update the remote runtime to link Jira'
+    )
+  }
   await callRuntimeRpc(
     target,
     'worktree.set',

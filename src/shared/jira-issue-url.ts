@@ -6,7 +6,7 @@ export type ParsedJiraIssueUrl = {
   sitePath: string
 }
 
-const JIRA_ISSUE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
+export const JIRA_ISSUE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
 
 export function parseJiraIssueUrl(value: string): ParsedJiraIssueUrl | null {
   let url: URL

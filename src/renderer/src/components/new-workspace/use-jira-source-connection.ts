@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import {
   getTaskSourceCacheScope,
@@ -71,7 +71,11 @@ export function useJiraSourceConnection(args: {
   )
   const loadKey = contextKey ? `${contextKey}::${connectionRevision}` : null
   const sourceContextRef = useRef(args.sourceContext)
-  sourceContextRef.current = args.sourceContext
+  // Layout effects run before the read effect below, so the ref is current without
+  // being mutated during a render React may replay or discard.
+  useLayoutEffect(() => {
+    sourceContextRef.current = args.sourceContext
+  })
   const requestedLoadKeyRef = useRef<string | null>(null)
   const [state, setState] = useState<JiraSourceConnectionState>({
     loadKey: null,
