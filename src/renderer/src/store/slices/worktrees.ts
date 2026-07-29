@@ -43,6 +43,7 @@ import { disposeRemovedWorktreeParkedTerminalWatchers } from '../../components/t
 import {
   callRuntimeRpc,
   getActiveRuntimeTarget,
+  hasRuntimeRpcErrorCode,
   isRuntimeScopeForbiddenError,
   RuntimeRpcCallError
 } from '../../runtime/runtime-rpc-client'
@@ -841,43 +842,12 @@ function getFolderWorkspaceMetaUpdates(
   return next
 }
 
-function isRuntimeRpcError(error: unknown, expectedCode: string): boolean {
-  if (
-    error &&
-    typeof error === 'object' &&
-    'cause' in error &&
-    isRuntimeRpcError((error as { cause?: unknown }).cause, expectedCode)
-  ) {
-    return true
-  }
-  const code =
-    error &&
-    typeof error === 'object' &&
-    'code' in error &&
-    typeof (error as { code: unknown }).code === 'string'
-      ? (error as { code: string }).code
-      : null
-  const responseError =
-    error && typeof error === 'object' && 'response' in error
-      ? (error as { response?: { error?: { code?: unknown; message?: unknown } } }).response?.error
-      : undefined
-  const responseCode = typeof responseError?.code === 'string' ? responseError.code : null
-  const responseMessage = typeof responseError?.message === 'string' ? responseError.message : null
-  const message = error instanceof Error ? error.message : String(error)
-  return (
-    message === expectedCode ||
-    code === expectedCode ||
-    responseCode === expectedCode ||
-    responseMessage === expectedCode
-  )
-}
-
 function isRuntimeSelectorNotFoundError(error: unknown): boolean {
-  return isRuntimeRpcError(error, 'selector_not_found')
+  return hasRuntimeRpcErrorCode(error, 'selector_not_found')
 }
 
 function isRuntimeRepoNotFoundError(error: unknown): boolean {
-  return isRuntimeRpcError(error, 'repo_not_found')
+  return hasRuntimeRpcErrorCode(error, 'repo_not_found')
 }
 
 function replaceWorktreeInRepoLists(
@@ -3848,7 +3818,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       // Why: renderer state follows the successful backend result, so blocked dirty deletes keep their terminals intact.
       // Why browsers first: unregister Chromium guests before other teardown can intercept them (avoids a browser-state race).
       await get().shutdownWorktreeBrowsers(worktreeId)
-      await get().shutdownWorktreeTerminals(worktreeId)
+      await get().shutdownWorktreeTerminals(worktreeId, { shutdownReason: 'remove-worktree' })
       // Why: dispose the SSH relay AFTER terminal teardown so a still-mounted pane can't hit a gone relay and toast "SSH not active".
       const destroyedRuntimeSshTargetIds = await cleanupEphemeralVmRuntimesForDeleted({
         workspaceIds: [worktreeId]

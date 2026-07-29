@@ -3042,7 +3042,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       markShutdownPending()
       handlerSnapshots = unregisterPtyDataHandlers(rendererShutdownPtyIds) ?? []
       try {
-        if (runtimeEnvironmentId) {
+        // Backend workspace removal already owns physical PTY teardown; only retire renderer bindings here.
+        if (runtimeEnvironmentId && shutdownReason !== 'remove-worktree') {
           await (shutdownReason === 'manual-sleep'
             ? requestRemoteWorktreeSleep({
                 environmentId: runtimeEnvironmentId,
