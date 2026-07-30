@@ -193,10 +193,19 @@ prompt.
 
 Policy:
 
-- existing hashed IDs are grandfathered as opaque stable IDs; the generating
-  codemod must not be rerun against existing keys, and no mass rename happens
-  during this migration;
-- new keys must use intent-named IDs and named interpolation placeholders; and
+- hashed IDs already in the desktop catalog as of this decision (2026-07-30)
+  are grandfathered as opaque stable IDs; the generating codemod must not be
+  rerun against existing keys, and no mass rename happens during this
+  migration;
+- newly minted hash IDs — including in-flight bridge catalogs not yet merged
+  or merged after this decision — are **not** grandfathered: they are renamed
+  to intent-named IDs in a dedicated change adjacent to their landing, before
+  PO becomes canonical for that surface, never buried inside an otherwise
+  reviewed feature PR;
+- new keys must use intent-named IDs and named interpolation placeholders;
+- converting positional placeholders to named ones requires per-message
+  semantic judgment (the name is part of the translatable contract), not a
+  mechanical rename; and
 - legacy IDs and positional placeholders are improved opportunistically when
   the copy itself is touched, never in bulk.
 
@@ -234,8 +243,18 @@ Two additional surfaces are in scope:
 
 - **Mobile.** The mobile app is acquiring its own catalog tree with its own
   key scheme. Mobile must adopt the same canonical contract, ID policy, and
-  compiler — with its own PO files and bundle target — rather than a second
-  bespoke pipeline. Mobile keys must not be folded into the desktop catalogs.
+  compiler — with its own PO files — rather than a second bespoke pipeline.
+  Mobile keys must not be folded into the desktop catalogs, and in-flight
+  mobile catalog JSON is a bridge the migration replaces, not a canonical
+  source. Mobile requires **two deterministic projections** from the same PO
+  source: the mobile i18next JSON bundle, and the native metadata resources
+  (iOS `InfoPlist.strings`, Android resources) that render before the JS
+  runtime exists. i18next fallback cannot cover pre-JS surfaces, so for a
+  missing, stale, or pending-approval native entry the compiler must either
+  omit the locale-specific native key with proven OS/base-locale fallback on
+  both platforms, or emit current English under a documented platform rule.
+  The intentional locale-ID mapping (JS `zh` vs native `zh-Hans`) is part of
+  the projection contract. The migration covers both projections.
 - **Plugin language packs.** Language packs remain external overrides
   validated against compiled core keys. They are consumers of the contract,
   not another canonical source, and the compiler must leave their runtime
@@ -259,8 +278,9 @@ After the compiler and migration are stable, automation should:
 7. fall back to English rather than shipping an invalid target.
 
 Human review should be risk-based. Destructive actions, authentication,
-billing, privacy, security, legal copy, and other sensitive flows require
-review. Routine labels and descriptions may use validated machine translation
+billing, privacy, security, legal copy, OS permission prompts (camera,
+microphone, photos, local network), native app metadata, and other sensitive
+flows require review. Routine labels and descriptions may use validated machine translation
 under the adopted release policy. A model-provided confidence score alone is
 not sufficient release evidence.
 
@@ -306,7 +326,10 @@ PR B must remain a small architecture and implementation proof. It should add:
 2. extraction into the current English source;
 3. sparse source/target parsing via maintained PO tooling;
 4. deterministic, read-only i18next bundle compilation, omitting entries
-   whose stored source mismatches current English or that are fuzzy;
+   whose stored source mismatches current English or that are fuzzy — with a
+   compiler shape that admits additional per-locale projections (the mobile
+   native-resource output) even though PR B implements only the i18next
+   bundle;
 5. a separate reconciliation command owning all PO mutations (`msgid`
    update, `#| msgid` preservation, `#, fuzzy`);
 6. state-dependent placeholder validation;
@@ -331,7 +354,10 @@ The migration must:
 - export all current stable English IDs and values;
 - import real target values without retranslating them;
 - preserve known reviewed corrections;
-- mark unproven values as pending approval, with imported provenance;
+- mark unproven values as pending approval, with imported provenance —
+  bridge catalogs in particular mix reused desktop translations, machine
+  translation, and manual corrections, and must be classified rather than
+  assumed approved;
 - remove copied-English parity filler unless it is intentionally English,
   seeding the identical-to-English exemption inputs from the existing policy
   data;
