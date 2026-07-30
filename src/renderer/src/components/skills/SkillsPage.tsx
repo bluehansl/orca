@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, BookOpen, Loader2, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeft, BookOpen, Loader2, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
+import { IntegrationStatusPill } from '@/components/integration-status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
@@ -171,6 +173,14 @@ export default function SkillsPage(): React.JSX.Element {
     () => (result?.sources ?? []).filter((source) => source.skippedReason === 'remote-repo'),
     [result]
   )
+  const remoteSkippedTooltip =
+    remoteSkippedSources.length > 0
+      ? translate(
+          'auto.components.skills.SkillsPage.06827d9cc5',
+          "Skills in repositories on remote hosts aren't discovered yet: {{value0}}",
+          { value0: remoteSkippedSources.map((source) => source.label).join(', ') }
+        )
+      : ''
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-background">
@@ -293,26 +303,31 @@ export default function SkillsPage(): React.JSX.Element {
             </span>
           ))}
           {remoteSkippedSources.length > 0 ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-amber-600/50 px-2 py-1 text-amber-700 dark:border-amber-400/40 dark:text-amber-400"
-              title={translate(
-                'auto.components.skills.SkillsPage.06827d9cc5',
-                "Skills in repositories on remote hosts aren't discovered yet: {{value0}}",
-                { value0: remoteSkippedSources.map((source) => source.label).join(', ') }
-              )}
-            >
-              <AlertTriangle className="size-3 shrink-0" />
-              {remoteSkippedSources.length === 1
-                ? translate(
-                    'auto.components.skills.SkillsPage.94aa471ea4',
-                    '1 remote repo not scanned'
-                  )
-                : translate(
-                    'auto.components.skills.SkillsPage.92411ea310',
-                    '{{value0}} remote repos not scanned',
-                    { value0: remoteSkippedSources.length }
-                  )}
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={remoteSkippedTooltip}
+                  className="cursor-help rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  <IntegrationStatusPill tone="attention">
+                    {remoteSkippedSources.length === 1
+                      ? translate(
+                          'auto.components.skills.SkillsPage.94aa471ea4',
+                          '1 remote repo not scanned'
+                        )
+                      : translate(
+                          'auto.components.skills.SkillsPage.92411ea310',
+                          '{{value0}} remote repos not scanned',
+                          { value0: remoteSkippedSources.length }
+                        )}
+                  </IntegrationStatusPill>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={4}>
+                {remoteSkippedTooltip}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
       </section>

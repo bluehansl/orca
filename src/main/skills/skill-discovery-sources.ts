@@ -204,8 +204,7 @@ export function buildSkillDiscoverySources(
   return roots
 }
 
-/** Repos owned by a remote host are dropped from local scan roots above; emit
- *  them as skipped sources so the exclusion is legible instead of silent (#11466). */
+// Report remote repos that local discovery deliberately excludes.
 export function buildRemoteRepoSkippedSources(repos: readonly Repo[]): SkillDiscoverySource[] {
   const seenRemoteRepos = new Set<string>()
   const sources: SkillDiscoverySource[] = []

@@ -192,7 +192,11 @@ describe('SkillsPage', () => {
     await flushMicrotasks()
 
     expect(container?.textContent).toContain('1 remote repo not scanned')
-    expect(container?.querySelector('[title*="api-server"]')).not.toBeNull()
+    const skippedRepoTrigger = container?.querySelector<HTMLButtonElement>(
+      'button[aria-label*="api-server"]'
+    )
+    expect(skippedRepoTrigger).not.toBeNull()
+    expect(skippedRepoTrigger?.hasAttribute('title')).toBe(false)
   })
 
   it('shows no skipped-repo chip when every source is local', async () => {
