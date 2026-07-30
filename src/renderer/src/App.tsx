@@ -49,6 +49,7 @@ import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
 import { AgentHibernationGate } from './components/AgentHibernationGate'
 import { DataRecoveryMigrationNotice } from './components/data-recovery/DataRecoveryMigrationNotice'
+import { DataRecoveryPinExitNotice } from './components/data-recovery/DataRecoveryPinExitNotice'
 import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
 import Sidebar from './components/Sidebar'
 import { shutdownBufferCaptures } from './components/terminal-pane/shutdown-buffer-captures'
@@ -2227,6 +2228,7 @@ function App(): React.JSX.Element {
             <AgentHibernationGate />
             {/* Why: a blocked data migration must be visible without opening Settings (runbook release requirement). */}
             <DataRecoveryMigrationNotice />
+            <DataRecoveryPinExitNotice />
             {/* Why: workspace activation is a hot path; activeWorktreeId in reset keys would remount whole surfaces during wake. */}
             <RecoverableRenderErrorBoundary
               boundaryId="app.workspace-shell"
