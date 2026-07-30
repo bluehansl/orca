@@ -181,7 +181,7 @@ function getSettingsSectionId(
   pane: SettingsNavTarget,
   repoId: string | null,
   repoIdToRepresentative: Map<string, string>
-): string {
+) {
   if (pane === 'repo' && repoId) {
     // Why: Settings renders one collapsed pane per project, so resolve a repoId target to its project's representative section.
     return `repo-${repoIdToRepresentative.get(repoId) ?? repoId}`
@@ -632,7 +632,7 @@ function Settings(): React.JSX.Element {
     }
 
     const paneSectionId = getSettingsSectionId(
-      settingsNavigationTarget.pane as SettingsNavTarget,
+      settingsNavigationTarget.pane,
       settingsNavigationTarget.repoId,
       repoIdToRepresentative
     )

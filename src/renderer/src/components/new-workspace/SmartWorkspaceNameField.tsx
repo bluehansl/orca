@@ -59,6 +59,7 @@ import {
   getBranchSearchRequest,
   getSmartWorkspaceEmptyHint,
   getVisibleBranchResults,
+  getVisibleHeldProviderResults,
   isBlockingJiraUrlIntent,
   isSmartWorkspaceSourceQueryWithinLimit,
   type SmartNameMode,
@@ -657,6 +658,11 @@ export default function SmartWorkspaceNameField({
       return
     }
     let stale = false
+    // Why: empty-query search must not briefly paint the previous non-empty result set
+    // once debounce catches a cleared field.
+    if (debouncedQuery.trim() === '') {
+      setGithubItems([])
+    }
     const directNumber = normalizedGhQuery.directNumber
     const directLink = parsedGhLink
     if (directLink !== null && handledCrossRepoUrlRef.current !== debouncedQuery.trim()) {
@@ -932,8 +938,8 @@ export default function SmartWorkspaceNameField({
       return
     }
     let stale = false
-    setBranches([])
-    setBranchResultsSource(null)
+    // Why: keep prior branch rows until this request settles; visibility already
+    // holds the last list while the user types ahead of the debounced query.
     setBranchesLoading(true)
     void searchRuntimeRepoBaseRefDetails(
       selectedRepoOwnerSettings,
@@ -975,6 +981,10 @@ export default function SmartWorkspaceNameField({
     let stale = false
     setLinearLoading(true)
     const trimmed = debouncedQuery.trim()
+    // Why: empty-query list must not briefly paint the previous non-empty result set.
+    if (trimmed === '') {
+      setLinearIssues([])
+    }
     const request = trimmed
       ? searchLinearIssues(trimmed, RESULT_LIMIT, { sourceContext: linearSourceContext })
       : listLinearIssues(
@@ -1138,6 +1148,10 @@ export default function SmartWorkspaceNameField({
     setGitlabLoading(true)
     // Why: thread the typed query so the GitLab API filters MRs by name/number (shouldQueryGitlab already gates oversized queries).
     const trimmedQuery = debouncedQuery.trim() || undefined
+    // Why: empty-query list must not briefly paint the previous non-empty result set.
+    if (trimmedQuery === undefined) {
+      setGitlabItems([])
+    }
     void Promise.all(
       repoBackedSearchTargets.map((target) =>
         listGitLabMRsForSource({
@@ -1203,14 +1217,30 @@ export default function SmartWorkspaceNameField({
         selectedRepoId: selectedRepo?.id ?? null,
         value
       }),
-      githubItems,
+      githubItems: getVisibleHeldProviderResults({
+        items: githubItems,
+        value,
+        debouncedQuery
+      }),
       gitlabAvailable: gitlabSourceAvailable,
-      gitlabItems,
+      gitlabItems: getVisibleHeldProviderResults({
+        items: gitlabItems,
+        value,
+        debouncedQuery
+      }),
       jiraIntent: jiraSource.intent,
       jiraIssue: jiraSource.issue,
-      jiraIssues,
+      jiraIssues: getVisibleHeldProviderResults({
+        items: jiraIssues,
+        value,
+        debouncedQuery
+      }),
       linearAvailable,
-      linearIssues,
+      linearIssues: getVisibleHeldProviderResults({
+        items: linearIssues,
+        value,
+        debouncedQuery
+      }),
       mode,
       resultLimit: RESULT_LIMIT,
       value
@@ -1218,6 +1248,7 @@ export default function SmartWorkspaceNameField({
   }, [
     branches,
     branchResultsSource,
+    debouncedQuery,
     githubItems,
     gitlabSourceAvailable,
     gitlabItems,
@@ -1239,7 +1270,7 @@ export default function SmartWorkspaceNameField({
     }
   }, [rows])
 
-  // Why: source rows lag debouncedQuery, so keep Enter off a stale row.
+  // Why: live input leads debounced search; freeze highlight until the query catches up.
   const valueWithinSourceLimit = isSmartWorkspaceSourceQueryWithinLimit(value)
   const debouncedQueryWithinSourceLimit = isSmartWorkspaceSourceQueryWithinLimit(debouncedQuery)
   const trimmedValue = valueWithinSourceLimit ? value.trim() : ''
@@ -1276,6 +1307,14 @@ export default function SmartWorkspaceNameField({
     isQueryStale,
     sourceIntent
   })
+  // Why: while isQueryStale, cmdk onValueChange is ignored; re-sync the stored arm
+  // when the query settles so commandValue cannot lag resolvedCommandValue.
+  useEffect(() => {
+    if (isQueryStale || commandValue === resolvedCommandValue) {
+      return
+    }
+    setCommandValue(resolvedCommandValue)
+  }, [commandValue, isQueryStale, resolvedCommandValue])
   const activeEmojiShortcode = useMemo(
     () => getActiveWorkspaceEmojiShortcode(value, emojiCursor),
     [emojiCursor, value]
@@ -1307,7 +1346,10 @@ export default function SmartWorkspaceNameField({
   const loading = jiraSource.intent
     ? jiraSource.loading
     : githubLoading || gitlabLoading || branchesLoading || linearLoading || jiraLoading
-  const ActiveInputIcon = mode === 'text' ? CaseSensitive : loading ? LoaderCircle : Search
+  // Why: only spin on first load — not on every in-flight refresh while rows stay visible.
+  const showSearchSpinner = loading && searchResultRows.length === 0
+  const ActiveInputIcon =
+    mode === 'text' ? CaseSensitive : showSearchSpinner ? LoaderCircle : Search
   const selectJiraAccount = jiraSource.selectAccount
   const jiraBoundSourceContext = jiraSource.boundSourceContext
 
@@ -1317,6 +1359,8 @@ export default function SmartWorkspaceNameField({
         selectJiraAccount(row.site.id)
         return
       }
+      // Why: select what is shown — held provider rows stay visible while the
+      // query is ahead of debounce, so blocking them made click/Enter no-ops.
       if (row.kind === 'use-name' || row.kind === 'create-branch') {
         // Why: "create new branch" has no ref to base from, so it uses the typed-name path (default base).
         onValueChange(row.name)
@@ -1619,7 +1663,14 @@ export default function SmartWorkspaceNameField({
       >
         <Command
           value={resolvedCommandValue}
-          onValueChange={setCommandValue}
+          onValueChange={(next) => {
+            // Why: cmdk re-emits when the item list reshapes; ignore while the query
+            // lags so the highlight cannot thrash mid-typing.
+            if (isQueryStale) {
+              return
+            }
+            setCommandValue(next)
+          }}
           shouldFilter={false}
           className="overflow-visible bg-transparent"
         >
@@ -1705,7 +1756,7 @@ export default function SmartWorkspaceNameField({
                   <ActiveInputIcon
                     className={cn(
                       'pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground',
-                      loading && mode !== 'text' && 'animate-spin'
+                      showSearchSpinner && mode !== 'text' && 'animate-spin'
                     )}
                   />
                   <Input
@@ -1812,7 +1863,7 @@ export default function SmartWorkspaceNameField({
                             handleSelect(row)
                             return
                           }
-                          // No highlighted row (e.g. cleared stale GitHub/Linear results); fall through to onPlainEnter so the keypress isn't inert.
+                          // No highlighted row; fall through to onPlainEnter so the keypress isn't inert.
                         }
                         if (mode === 'jira' || jiraSource.intent) {
                           event.preventDefault()
