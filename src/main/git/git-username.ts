@@ -43,13 +43,21 @@ export function isPlausibleHostedLogin(value: string): boolean {
   )
 }
 
+// Not a check-ref-format rule: a login becomes one slash-free branch component,
+// which a loose ref stores as a single filename (255-byte cap on ext4/APFS/NTFS).
+// The ASCII-only charset below makes character count equal byte count.
+const MAX_BRANCH_SAFE_LOGIN_LENGTH = 255
+
 /**
  * Provider-agnostic branch-safe token: GitLab/Bitbucket/self-hosted logins may
  * carry `_`/`.` and run longer than GitHub's 39-char limit, so the strict
  * GitHub rule must not gate explicitly configured usernames.
  */
 export function isBranchSafeHostedLogin(value: string): boolean {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)) {
+  if (value.length > MAX_BRANCH_SAFE_LOGIN_LENGTH) {
+    return false
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
     return false
   }
   // Dot placements git check-ref-format rejects; `.lock` is case-sensitive there too.

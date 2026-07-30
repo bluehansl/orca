@@ -34,19 +34,29 @@ function makeExecError(
 }
 
 describe('isBranchSafeHostedLogin', () => {
-  it.each(['demo', 'demo-user', 'demo_user', 'demo.user', 'a', 'FOO.LOCK', 'a'.repeat(64)])(
+  it.each(['demo', 'demo-user', 'demo_user', 'demo.user', 'a', 'FOO.LOCK'])(
     'accepts %s',
     (login) => {
       expect(isBranchSafeHostedLogin(login)).toBe(true)
     }
   )
 
-  it.each(['foo.', 'foo..bar', 'foo.lock', 'a.b.lock', '.foo', '-foo', 'foo bar', 'a'.repeat(65)])(
+  it.each(['foo.', 'foo..bar', 'foo.lock', 'a.b.lock', '.foo', '-foo', 'foo bar'])(
     'rejects the git check-ref-format-invalid %s',
     (login) => {
       expect(isBranchSafeHostedLogin(login)).toBe(false)
     }
   )
+
+  // Length is Orca's defensive bound, not a check-ref-format rule: a login is one
+  // branch component, so a loose ref stores it as a single 255-byte-max filename.
+  it('accepts long provider-agnostic logins up to the loose-ref filename cap', () => {
+    expect(isBranchSafeHostedLogin('a'.repeat(255))).toBe(true)
+  })
+
+  it('rejects logins past the loose-ref filename cap', () => {
+    expect(isBranchSafeHostedLogin('a'.repeat(256))).toBe(false)
+  })
 })
 
 describe('resolveLocalGitUsername', () => {
