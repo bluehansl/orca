@@ -10,6 +10,7 @@ import type {
   SkillDiscoverySource
 } from '../../shared/skills'
 import {
+  buildRemoteRepoSkippedSources,
   buildSkillDiscoverySources,
   compareSkills,
   sourceKindForSkill,
@@ -235,7 +236,7 @@ export async function discoverSkills(args: {
       ? await discoverClaudePluginSkillSources({ homeDir, cwd: args.cwd })
       : [])
   ]
-  const sources: SkillDiscoverySource[] = []
+  const sources: SkillDiscoverySource[] = buildRemoteRepoSkippedSources(args.repos ?? [])
   const skillGroups = await Promise.all(
     roots.map(async (root) => {
       const exists = await pathExists(root.path)

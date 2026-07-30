@@ -3832,7 +3832,10 @@
           "6a62a0168c": "No matches",
           "cd7893fbc1": "Scanning skills",
           "35b9a724a0": "Available",
-          "0c74e7ff34": "Installed"
+          "0c74e7ff34": "Installed",
+          "94aa471ea4": "1 remote repo not scanned",
+          "92411ea310": "{{value0}} remote repos not scanned",
+          "06827d9cc5": "Skills in repositories on remote hosts aren't discovered yet: {{value0}}"
         },
         "SkillFreshnessNudge": {
           "titleOne": "An installed Orca skill is out of date",

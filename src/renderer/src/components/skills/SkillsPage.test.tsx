@@ -4,7 +4,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GlobalSettings } from '../../../../shared/types'
-import type { DiscoveredSkill, SkillDiscoveryResult } from '../../../../shared/skills'
+import type {
+  DiscoveredSkill,
+  SkillDiscoveryResult,
+  SkillDiscoverySource
+} from '../../../../shared/skills'
 import { createCompatibleRuntimeStatusResponseIfNeeded } from '@/runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '@/runtime/runtime-rpc-client'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -33,8 +37,24 @@ function skill(name: string): DiscoveredSkill {
   }
 }
 
-function discoveryResult(names: string[]): SkillDiscoveryResult {
-  return { skills: names.map(skill), sources: [], scannedAt: 1 }
+function discoveryResult(
+  names: string[],
+  sources: SkillDiscoverySource[] = []
+): SkillDiscoveryResult {
+  return { skills: names.map(skill), sources, scannedAt: 1 }
+}
+
+function remoteSkippedSource(label: string): SkillDiscoverySource {
+  return {
+    id: `repo-remote-${label}`,
+    label,
+    path: `/remote/${label}`,
+    sourceKind: 'repo',
+    providers: ['agent-skills', 'claude'],
+    owner: null,
+    exists: false,
+    skippedReason: 'remote-repo'
+  }
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -157,6 +177,36 @@ describe('SkillsPage', () => {
 
     expect(renderedSkillNames()).toContain('remote-only')
     expect(renderedSkillNames()).not.toContain('local-only')
+  })
+
+  it('surfaces repos the scan skipped as remote instead of hiding them (#11466)', async () => {
+    const discover = vi
+      .fn()
+      .mockResolvedValue(discoveryResult(['local-skill'], [remoteSkippedSource('Repo api-server')]))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover }, runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+
+    expect(container?.textContent).toContain('1 remote repo not scanned')
+    expect(container?.querySelector('[title*="api-server"]')).not.toBeNull()
+  })
+
+  it('shows no skipped-repo chip when every source is local', async () => {
+    const discover = vi.fn().mockResolvedValue(discoveryResult(['local-skill']))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover }, runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+
+    expect(renderedSkillNames()).toContain('local-skill')
+    expect(container?.textContent).not.toContain('remote repo')
   })
 
   it('keeps scanning rather than listing client skills before the owner is known', async () => {

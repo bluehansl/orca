@@ -168,7 +168,8 @@ export function buildSkillDiscoverySources(
   const projectPaths = new Set<string>()
   for (const repo of args.repos ?? []) {
     // Why: runtime-owned repos can have no legacy connectionId while their
-    // paths are meaningful only on a remote host.
+    // paths are meaningful only on a remote host. buildRemoteRepoSkippedSources
+    // reports what this drops so the exclusion stays user-visible.
     if (getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
       continue
     }
@@ -201,4 +202,36 @@ export function buildSkillDiscoverySources(
   }
 
   return roots
+}
+
+/** Repos owned by a remote host are dropped from local scan roots above; emit
+ *  them as skipped sources so the exclusion is legible instead of silent (#11466). */
+export function buildRemoteRepoSkippedSources(repos: readonly Repo[]): SkillDiscoverySource[] {
+  const seenRemoteRepos = new Set<string>()
+  const sources: SkillDiscoverySource[] = []
+  for (const repo of repos) {
+    const hostId = getRepoExecutionHostId(repo)
+    if (hostId === LOCAL_EXECUTION_HOST_ID) {
+      continue
+    }
+    // Why: two hosts can carry the same path, so identity needs both.
+    const identity = `${hostId}\0${repo.path}`
+    if (seenRemoteRepos.has(identity)) {
+      continue
+    }
+    seenRemoteRepos.add(identity)
+    sources.push({
+      id: `repo-remote-${stablePathId(identity)}`,
+      // Why: the path's separators belong to the remote host, so split on both
+      // rather than applying local path arithmetic.
+      label: `Repo ${repo.path.split(/[\\/]/).findLast(Boolean) ?? repo.path}`,
+      path: repo.path,
+      sourceKind: 'repo',
+      providers: ['agent-skills', 'claude'],
+      owner: null,
+      exists: false,
+      skippedReason: 'remote-repo'
+    })
+  }
+  return sources
 }

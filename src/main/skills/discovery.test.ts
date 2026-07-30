@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildSkillDiscoverySources, discoverSkills } from './discovery'
+import { buildRemoteRepoSkippedSources } from './skill-discovery-sources'
 import { TUI_AGENT_CONFIG } from '../../shared/tui-agent-config'
 import type { Repo } from '../../shared/types'
 
@@ -193,6 +194,55 @@ describe('skill discovery', () => {
     const rootPaths = roots.map((root) => root.path.replace(/\\/g, '/'))
     expect(rootPaths).not.toContain('/remote/repo/.claude/skills')
     expect(rootPaths).toContain('/workspace/current/.claude/skills')
+  })
+
+  it('emits a remote-repo skipped source instead of silently dropping SSH repos (#11466)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skills-'))
+    const home = join(root, 'home')
+    await mkdir(home, { recursive: true })
+
+    const result = await discoverSkills({
+      homeDir: home,
+      repos: [makeRepo('/remote/api-server', 'ssh-1'), makeRepo(join(root, 'local-repo'))],
+      includeCwd: false
+    })
+
+    const skipped = result.sources.filter((source) => source.skippedReason === 'remote-repo')
+    expect(skipped).toMatchObject([
+      {
+        label: 'Repo api-server',
+        path: '/remote/api-server',
+        sourceKind: 'repo',
+        exists: false,
+        owner: null,
+        providers: ['agent-skills', 'claude']
+      }
+    ])
+    // Why: the skipped entry reports the exclusion; nothing may be scanned from it.
+    expect(result.skills).toEqual([])
+  })
+
+  it('reports each remote repo once, across SSH and runtime hosts', () => {
+    const runtimeRepo = makeRepo('/runtime/repo')
+    runtimeRepo.executionHostId = 'runtime:environment-1'
+
+    const skipped = buildRemoteRepoSkippedSources([
+      makeRepo('/remote/api-server', 'ssh-1'),
+      makeRepo('/remote/api-server', 'ssh-1'),
+      runtimeRepo,
+      makeRepo('C:\\projects\\win-repo', 'ssh-2'),
+      makeRepo('/workspace/local')
+    ])
+
+    expect(skipped.map((source) => source.label)).toEqual([
+      'Repo api-server',
+      'Repo repo',
+      'Repo win-repo'
+    ])
+    expect(new Set(skipped.map((source) => source.id)).size).toBe(3)
+    for (const source of skipped) {
+      expect(source).toMatchObject({ exists: false, skippedReason: 'remote-repo' })
+    }
   })
 
   it('scans each provider home skill root that npx skills --global writes to', () => {
