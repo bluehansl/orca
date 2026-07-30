@@ -49,7 +49,11 @@ export function isPlausibleHostedLogin(value: string): boolean {
  * GitHub rule must not gate explicitly configured usernames.
  */
 export function isBranchSafeHostedLogin(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)) {
+    return false
+  }
+  // Dot placements git check-ref-format rejects; `.lock` is case-sensitive there too.
+  return !value.includes('..') && !value.endsWith('.') && !value.endsWith('.lock')
 }
 
 function normalizeHostedLogin(value: string): string {

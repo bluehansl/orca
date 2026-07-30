@@ -14,6 +14,7 @@ vi.mock('./runner', async () => {
 })
 
 import {
+  isBranchSafeHostedLogin,
   resolveLocalGitUsername,
   resolveLocalGitUsernameDetailed,
   resetGhLoginCacheForTests
@@ -31,6 +32,22 @@ function makeExecError(
 ): Error {
   return Object.assign(new Error(message), { stdout: '', stderr: '', ...extra })
 }
+
+describe('isBranchSafeHostedLogin', () => {
+  it.each(['demo', 'demo-user', 'demo_user', 'demo.user', 'a', 'FOO.LOCK', 'a'.repeat(64)])(
+    'accepts %s',
+    (login) => {
+      expect(isBranchSafeHostedLogin(login)).toBe(true)
+    }
+  )
+
+  it.each(['foo.', 'foo..bar', 'foo.lock', 'a.b.lock', '.foo', '-foo', 'foo bar', 'a'.repeat(65)])(
+    'rejects the git check-ref-format-invalid %s',
+    (login) => {
+      expect(isBranchSafeHostedLogin(login)).toBe(false)
+    }
+  )
+})
 
 describe('resolveLocalGitUsername', () => {
   let gitConfig: Record<string, string>
@@ -102,6 +119,15 @@ describe('resolveLocalGitUsername', () => {
 
     await expect(resolveLocalGitUsername('/repo')).resolves.toBe('repo-demo')
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('falls through config values git rejects as branch components', async () => {
+    originRemoteUrl = 'https://github.com/stablyai/orca.git'
+    gitConfig['github.user'] = 'foo.lock'
+    gitConfig['user.username'] = 'foo..bar'
+    ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: 'gh-demo\n', stderr: '' })
+
+    await expect(resolveLocalGitUsername('/repo')).resolves.toBe('gh-demo')
   })
 
   it('uses GitHub CLI login for GitHub remotes instead of repo-local author identity', async () => {
