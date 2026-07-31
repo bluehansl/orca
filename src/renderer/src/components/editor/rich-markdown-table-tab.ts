@@ -1,8 +1,7 @@
 import type { Editor } from '@tiptap/react'
 
 /**
- * Obsidian-like table Tab: move between cells; Tab past the last cell
- * inserts a row (TipTap/prosemirror-tables default).
+ * Table Tab: move between cells; Tab past the last cell inserts a row.
  * Returns true when the key should be consumed (always inside a table).
  */
 export function handleRichMarkdownTableTab(editor: Editor, shiftKey: boolean): boolean {

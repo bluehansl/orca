@@ -168,16 +168,16 @@ export function createRichMarkdownKeyHandler(
         event.preventDefault()
         return true
       }
-      // Why: BlockNote/Outline-style table Enter (cell below / add row) must run
-      // before ProseMirror inserts an in-cell paragraph that GFM can't keep.
+      // Why: table Enter (cell below / add row) must run before ProseMirror
+      // inserts an in-cell paragraph that GFM serialization cannot keep.
       if (ed && !isComposingMarkdownInput(event, ed) && handleRichMarkdownTableEnter(ed)) {
         event.preventDefault()
         return true
       }
     }
 
-    // Tab/Shift-Tab: table cell nav first (Obsidian-like), then list indent /
-    // outdent, code-block spaces, and prevent focus escaping the editor.
+    // Tab/Shift-Tab: table cell nav first, then list indent/outdent, code-block
+    // spaces, and prevent focus escaping the editor.
     // When the slash menu or doc-link menu is open, Tab selects a row instead
     // (handled in the menu blocks below).
     if (event.key === 'Tab' && !ctx.slashMenuRef.current && !ctx.docLinkMenuRef.current) {

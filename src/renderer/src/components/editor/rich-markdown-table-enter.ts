@@ -19,12 +19,9 @@ function moveToVerticalNeighbor(editor: Editor, direction: 1 | -1): boolean {
 }
 
 /**
- * BlockNote-style table Enter: move to the cell below instead of inserting a
- * paragraph (GFM tables don't represent multi-line cells cleanly).
- * Returns true when the key should be consumed inside a table.
- *
- * Reference: TypeCellOS/BlockNote packages/core/src/blocks/Table/TableExtension.ts
- * Last-row growth matches Outline's add-row-on-boundary pattern.
+ * Table Enter: move to the cell below instead of inserting an in-cell
+ * paragraph (GFM cannot keep multi-line table cells). On the last row,
+ * insert a row and move into it. Returns true when consumed inside a table.
  */
 export function handleRichMarkdownTableEnter(editor: Editor): boolean {
   if (!isInTable(editor.state)) {

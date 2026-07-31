@@ -49,7 +49,7 @@ function selectionText(editor: Editor): string {
 }
 
 describe('handleRichMarkdownTableEnter', () => {
-  it('moves Enter to the cell below (BlockNote-style)', () => {
+  it('moves Enter to the cell below', () => {
     const editor = createEditor()
     try {
       editor.commands.setTextSelection(cellCursorForText(editor, 'a1'))

@@ -128,7 +128,7 @@ async function tableRowCount(page: {
   })
 }
 
-test.describe('Markdown table Obsidian-like keyboard', () => {
+test.describe('Markdown table keyboard', () => {
   test.beforeEach(async ({ orcaPage }) => {
     await waitForSessionReady(orcaPage)
     await waitForActiveWorktree(orcaPage)
@@ -183,7 +183,7 @@ test.describe('Markdown table Obsidian-like keyboard', () => {
         })
         .toBe('a')
 
-      // Enter moves down a column (BlockNote-style), landing in empty row.
+      // Enter moves down a column, landing in the empty body row.
       await orcaPage.keyboard.press('Enter')
       await expect
         .poll(async () => selectionCellText(orcaPage), {

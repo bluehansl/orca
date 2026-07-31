@@ -44,14 +44,10 @@ function findTableContext($from: ResolvedPos): {
 }
 
 /**
- * Notion / Outline / BlockNote hybrid Backspace inside tables:
+ * Structural Backspace inside tables:
  * 1. Fully empty row → delete row (or table if last row)
  * 2. Empty cell at start with non-empty siblings → previous cell
  * 3. Otherwise leave to default content delete
- *
- * References:
- * - Outline shared/editor/nodes/Table.ts (Backspace cell/row/table selection chain)
- * - BlockNote TableExtension (Backspace at cell start is structural, not list-join)
  */
 export function handleRichMarkdownTableBackspace(editor: Editor): boolean {
   const { selection } = editor.state
@@ -79,14 +75,14 @@ export function handleRichMarkdownTableBackspace(editor: Editor): boolean {
     return deleteEmptyTableRow(editor, context.tableDepth)
   }
 
-  // Empty cell in a non-empty row: step back a cell (Notion-like) instead of
-  // joining across the cell boundary into previous-cell text.
+  // Empty cell in a non-empty row: step back a cell instead of joining across
+  // the cell boundary into previous-cell text.
   if (editor.commands.goToPreviousCell()) {
     return true
   }
 
   // First cell of the table and empty: consume so ProseMirror doesn't try to
-  // delete/merge the table node (BlockNote same guard).
+  // delete or merge the table node.
   return true
 }
 
