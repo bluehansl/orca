@@ -11,6 +11,15 @@ type PwshAvailabilityCache =
 let pwshAvailableCache: PwshAvailabilityCache | null = null
 let pwshWarmupInFlight: Promise<boolean> | null = null
 let pwshProbeInFlight: Promise<boolean> | null = null
+// Why: the sync probe, the async twin and the warm-up can all be outstanding at once (the sync
+// one cannot await the others). Every write bumps this so a slower, older probe cannot clobber a
+// newer answer — a 30s "missing" cached over a success is what disables the user's PowerShell 7.
+let pwshCacheGeneration = 0
+
+function setPwshAvailabilityCache(next: PwshAvailabilityCache | null): void {
+  pwshAvailableCache = next
+  pwshCacheGeneration += 1
+}
 
 function isCacheFresh(cache: PwshAvailabilityCache): boolean {
   return (
@@ -29,14 +38,18 @@ function isTimeoutError(error: unknown): boolean {
   return failure.code === 'ETIMEDOUT' || (failure.killed === true && failure.signal === 'SIGTERM')
 }
 
-function cachePwshProbeFailure(error: unknown): void {
+function cachePwshProbeFailure(error: unknown, generation: number): void {
+  // A probe that started before the current answer was written is stale; drop its failure.
+  if (generation !== pwshCacheGeneration) {
+    return
+  }
   // Why: pwsh.exe cold starts can exceed the sync timeout; do not let one slow
   // .NET startup disable the user's PowerShell 7 preference for the daemon.
   if (isTimeoutError(error)) {
-    pwshAvailableCache = null
+    setPwshAvailabilityCache(null)
     return
   }
-  pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: true }
+  setPwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: true })
 }
 
 /**
@@ -50,18 +63,19 @@ export function isPwshAvailable(): boolean {
   }
 
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    setPwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return false
   }
 
+  const generation = pwshCacheGeneration
   try {
     execFileSync('pwsh.exe', ['-Version'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: PWSH_SYNC_PROBE_TIMEOUT_MS
     })
-    pwshAvailableCache = { available: true }
+    setPwshAvailabilityCache({ available: true })
   } catch (error) {
-    cachePwshProbeFailure(error)
+    cachePwshProbeFailure(error, generation)
   }
 
   return pwshAvailableCache?.available ?? false
@@ -79,7 +93,7 @@ export function isPwshAvailableAsync(): Promise<boolean> {
   }
 
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    setPwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return Promise.resolve(false)
   }
 
@@ -87,13 +101,14 @@ export function isPwshAvailableAsync(): Promise<boolean> {
     return pwshProbeInFlight
   }
 
+  const generation = pwshCacheGeneration
   pwshProbeInFlight = new Promise((resolve) => {
     execFile('pwsh.exe', ['-Version'], { timeout: PWSH_SYNC_PROBE_TIMEOUT_MS }, (error) => {
       pwshProbeInFlight = null
       if (error) {
-        cachePwshProbeFailure(error)
+        cachePwshProbeFailure(error, generation)
       } else {
-        pwshAvailableCache = { available: true }
+        setPwshAvailabilityCache({ available: true })
       }
       resolve(pwshAvailableCache?.available ?? false)
     })
@@ -106,22 +121,23 @@ export function warmPwshAvailabilityCache(): Promise<boolean> {
     return Promise.resolve(true)
   }
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    setPwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return Promise.resolve(false)
   }
   if (pwshWarmupInFlight) {
     return pwshWarmupInFlight
   }
 
+  const generation = pwshCacheGeneration
   pwshWarmupInFlight = new Promise((resolve) => {
     execFile('pwsh.exe', ['-Version'], { timeout: PWSH_WARMUP_PROBE_TIMEOUT_MS }, (error) => {
       pwshWarmupInFlight = null
       if (!error) {
-        pwshAvailableCache = { available: true }
+        setPwshAvailabilityCache({ available: true })
         resolve(true)
         return
       }
-      cachePwshProbeFailure(error)
+      cachePwshProbeFailure(error, generation)
       resolve(false)
     })
   })

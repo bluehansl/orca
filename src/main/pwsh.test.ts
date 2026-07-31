@@ -195,6 +195,31 @@ describe('isPwshAvailable', () => {
     }
   })
 
+  // Why: the sync probe cannot await an async one already in flight, so the two overlap. The
+  // async failure is the older observation by then; caching it would disable the user's
+  // PowerShell 7 preference for 30s over a pwsh.exe that just answered.
+  it('does not let an older in-flight probe overwrite a newer answer', async () => {
+    const restorePlatform = setPlatform('win32')
+    const asyncProbe: { fail: (() => void) | null } = { fail: null }
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      asyncProbe.fail = () => callback(new Error('missing pwsh'), '', '')
+    })
+    execFileSyncMock.mockReturnValue('PowerShell 7.5.0')
+
+    try {
+      const { isPwshAvailable, isPwshAvailableAsync } = await import('./pwsh')
+      const pending = isPwshAvailableAsync()
+      expect(isPwshAvailable()).toBe(true)
+      asyncProbe.fail?.()
+      await expect(pending).resolves.toBe(true)
+      expect(isPwshAvailable()).toBe(true)
+      // The success is cached for the process lifetime, so nothing re-spawned.
+      expect(execFileSyncMock).toHaveBeenCalledTimes(1)
+    } finally {
+      restorePlatform()
+    }
+  })
+
   it('retries non-timeout failures after the negative cache TTL', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)

@@ -110,6 +110,39 @@ describe('windows terminal capability re-probe', () => {
     expect(probe).toHaveBeenCalledTimes(2)
   })
 
+  // Why: Settings, the status bar and paired web tab bars share one owner key. If joining reset
+  // the shared schedule, opening Settings beside a mounted status bar would pin the runner at the
+  // 30s base delay forever, which is exactly the wsl.exe/pwsh.exe spawn rate this backoff removes.
+  it('keeps the earned backoff when a second consumer joins a running schedule', async () => {
+    vi.useFakeTimers()
+    const { probe, readCached } = createWatcher()
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    // 30s, then +60s: the schedule now sits on a 120s delay.
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(probe).toHaveBeenCalledTimes(2)
+
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(probe).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  // A parked schedule has nothing to preserve, so a newly mounted surface still re-arms it.
+  it('re-arms a parked watcher when a new consumer joins', async () => {
+    vi.useFakeTimers()
+    const { probe, readCached } = createWatcher()
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    await vi.advanceTimersByTimeAsync(210_000 + 30 * 60_000)
+    expect(probe).toHaveBeenCalledTimes(3)
+
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(probe).toHaveBeenCalledTimes(4)
+  })
+
   it('re-arms a parked watcher when the window regains focus', async () => {
     vi.useFakeTimers()
     const { probe, readCached } = createWatcher()

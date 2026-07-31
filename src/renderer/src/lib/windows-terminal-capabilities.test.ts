@@ -243,6 +243,28 @@ describe('windows terminal capabilities', () => {
     expect(wslIsAvailable).toHaveBeenCalledTimes(2)
   })
 
+  // Why: the re-probe's shortest delay is exactly the cache TTL, so the boundary must read
+  // through. If this ever returned the cached answer, the watcher would spin without re-reading.
+  it('re-reads at exactly the cache TTL, so a re-probe never lands on a cache hit', async () => {
+    const wslIsAvailable = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    vi.stubGlobal('window', {
+      api: {
+        wsl: { isAvailable: wslIsAvailable, listDistros: vi.fn().mockResolvedValue([]) },
+        pwsh: { isAvailable: vi.fn().mockResolvedValue(false) },
+        gitBash: { isAvailable: vi.fn().mockResolvedValue(false) },
+        runtime: { getStatus: vi.fn().mockResolvedValue({ hostPlatform: 'win32' }) }
+      }
+    })
+
+    await expect(loadWindowsTerminalCapabilities({ now: 1_000 })).resolves.toMatchObject({
+      wslAvailable: false
+    })
+    await expect(loadWindowsTerminalCapabilities({ now: 31_000 })).resolves.toMatchObject({
+      wslAvailable: true
+    })
+    expect(wslIsAvailable).toHaveBeenCalledTimes(2)
+  })
+
   it('does not reuse capability cache between runtime owners', async () => {
     const isGitBashAvailable = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
     const runtimeGetStatus = vi

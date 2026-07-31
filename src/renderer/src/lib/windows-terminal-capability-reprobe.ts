@@ -87,13 +87,18 @@ function armRunner(runner: CapabilityReprobeRunner): void {
   scheduleNextProbe(runner)
 }
 
+// Why: re-arming restarts the ladder at the base delay, so a demand signal that arrives while a
+// probe is still recent must be ignored — otherwise repeated signals pin the schedule at 30s.
+function rearmOnDemandSignal(runner: CapabilityReprobeRunner): void {
+  if (Date.now() - runner.lastProbeAt < REPROBE_BASE_DELAY_MS) {
+    return
+  }
+  armRunner(runner)
+}
+
 function handleWindowFocus(): void {
-  const now = Date.now()
   for (const runner of runnersByOwnerKey.values()) {
-    if (now - runner.lastProbeAt < REPROBE_BASE_DELAY_MS) {
-      continue
-    }
-    armRunner(runner)
+    rearmOnDemandSignal(runner)
   }
 }
 
@@ -122,7 +127,8 @@ export function startWindowsTerminalCapabilityReprobe(options: {
   probe: () => Promise<WindowsTerminalCapabilities>
   readCached: () => WindowsTerminalCapabilities
 }): () => void {
-  const runner: CapabilityReprobeRunner = runnersByOwnerKey.get(options.ownerKey) ?? {
+  const existing = runnersByOwnerKey.get(options.ownerKey)
+  const runner: CapabilityReprobeRunner = existing ?? {
     consumers: 0,
     timer: null,
     attempt: 0,
@@ -138,8 +144,15 @@ export function startWindowsTerminalCapabilityReprobe(options: {
   runner.readCached = options.readCached
   runner.consumers += 1
   runnersByOwnerKey.set(options.ownerKey, runner)
-  // A newly mounted surface is a demand signal, so restart the backoff window.
-  armRunner(runner)
+  // A newly mounted surface is a demand signal, but joining a schedule that is already running
+  // must not discard the backoff it earned — Settings opening beside a mounted status bar would
+  // otherwise pin the shared owner key at a 30s spawn forever. The mount itself still reads
+  // through `loadWindowsTerminalCapabilities`, so the new surface is not left waiting on this.
+  if (!existing) {
+    armRunner(runner)
+  } else if (existing.timer === null) {
+    rearmOnDemandSignal(runner)
+  }
   attachFocusListener()
 
   let released = false

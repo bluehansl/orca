@@ -11,7 +11,7 @@ import { buildWindowsPowerShellSpawnAttempts } from './windows-shell-fallback-ch
 import { resolveProcessCwd } from './process-cwd'
 import { existsSync } from 'node:fs'
 import * as pty from 'node-pty'
-import { getDefaultWslDistro, parseWslPath, isWslAvailable } from '../wsl'
+import { getDefaultWslDistro, parseWslPath, isWslAvailableAsync } from '../wsl'
 import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import {
   injectHistoryEnv,
@@ -1365,7 +1365,9 @@ export class LocalPtyProvider implements IPtyProvider {
       if (gitBashPath) {
         profiles.push({ name: 'Git Bash', path: gitBashPath })
       }
-      if (isWslAvailable()) {
+      // Why: the sync twin blocks the main process for up to 5s on a wedged wsl.exe and cannot
+      // join a probe the capability IPC already has in flight, so it spawns a second wsl.exe.
+      if (await isWslAvailableAsync()) {
         profiles.push({ name: 'WSL', path: 'wsl.exe' })
       }
       return profiles

@@ -540,6 +540,52 @@ describe('WSL availability cache', () => {
     })
   })
 
+  // Why: the sync twin cannot await an async probe already in flight, so the two overlap. The
+  // async result is the older observation by then; letting it land would cache "WSL missing" for
+  // 10 minutes over a wsl.exe that answered a moment ago, dropping WSL from the picker.
+  it('does not let an older in-flight probe overwrite a newer answer', async () => {
+    const asyncProbe: { finish: (() => void) | null } = { finish: null }
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      asyncProbe.finish = () => callback(Object.assign(new Error('not installed'), { code: 1 }), '')
+    })
+    execFileSyncMock.mockReturnValueOnce('')
+
+    await withPlatformAsync('win32', async () => {
+      const pending = isWslAvailableAsync()
+      expect(isWslAvailable()).toBe(true)
+      asyncProbe.finish?.()
+      await expect(pending).resolves.toBe(true)
+      expect(getCachedWslAvailability()).toBe(true)
+      expect(isWslAvailable()).toBe(true)
+      // The success is cached for the process lifetime, so nothing re-spawned.
+      expect(execFileSyncMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // Why: `getWslRepairReason` checks availability first, so a failure written after a distro list
+  // proved wsl.exe runs would report `wsl-unavailable` for the whole definitive window.
+  it('does not restore an availability failure a distro list disproved mid-probe', async () => {
+    const asyncProbe: { fail: (() => void) | null } = { fail: null }
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      asyncProbe.fail = () =>
+        callback(Object.assign(new Error('wsl.exe exited 1'), { code: 1 }), '')
+    })
+
+    await withPlatformAsync('win32', async () => {
+      const pending = isWslAvailableAsync()
+      // A distro turns up while the status probe is still running.
+      execFileSyncMock.mockReturnValueOnce('Ubuntu\n')
+      expect(listWslDistros()).toEqual(['Ubuntu'])
+      asyncProbe.fail?.()
+      await expect(pending).resolves.toBe(false)
+      expect(hasCachedWslAvailability()).toBe(false)
+
+      // Without dropping the stale failure this would stay false for 10min.
+      execFileSyncMock.mockReturnValueOnce('')
+      expect(isWslAvailable()).toBe(true)
+    })
+  })
+
   // Why: wsl.exe ships in System32 on every modern Windows, so a host without WSL answers
   // with a non-zero exit, not ENOENT — and execFile reports that as a numeric `code`, not the
   // `status` execFileSync uses. Misreading it as retryable would shrink the shared cache window

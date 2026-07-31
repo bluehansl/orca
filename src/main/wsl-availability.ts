@@ -8,6 +8,15 @@ type WslAvailabilityCache =
 
 let wslAvailableCache: WslAvailabilityCache | null = null
 let wslAvailabilityProbeInFlight: Promise<boolean> | null = null
+// Why: probes can overlap — the sync twin cannot await the async one, and a distro list can
+// prove wsl.exe runs mid-probe. Every write bumps this, so a probe that started earlier never
+// resurrects an answer a newer write already superseded.
+let wslAvailabilityCacheGeneration = 0
+
+function setWslAvailabilityCache(next: WslAvailabilityCache | null): void {
+  wslAvailableCache = next
+  wslAvailabilityCacheGeneration += 1
+}
 
 const WSL_AVAILABILITY_PROBE_TIMEOUT_MS = 5000
 // Why: availability is a separate, blocking probe. Deliberately not a multiple of the
@@ -67,16 +76,25 @@ function previousWslAvailabilityFailures(): number {
   return wslAvailableCache && 'failures' in wslAvailableCache ? wslAvailableCache.failures : 0
 }
 
-function cacheWslAvailabilityProbeResult(error: unknown, previousFailures: number): boolean {
-  wslAvailableCache = error
-    ? {
-        available: false,
-        cachedAt: Date.now(),
-        retryable: isRetryableWslProbeFailure(error),
-        failures: previousFailures + 1
-      }
-    : { available: true }
-  return wslAvailableCache.available
+function cacheWslAvailabilityProbeResult(error: unknown, generation: number): boolean {
+  if (!error) {
+    // A zero exit is proof, and #11295 says absent must never latch, so a success always wins.
+    setWslAvailabilityCache({ available: true })
+    return true
+  }
+  // Why: a newer probe answered, or a non-empty distro list proved wsl.exe runs, while this one
+  // was in flight. Its failure is stale: writing it would restore a negative cache — with a
+  // failure count and backoff window built on state that no longer holds.
+  if (generation !== wslAvailabilityCacheGeneration) {
+    return wslAvailableCache?.available ?? false
+  }
+  setWslAvailabilityCache({
+    available: false,
+    cachedAt: Date.now(),
+    retryable: isRetryableWslProbeFailure(error),
+    failures: previousWslAvailabilityFailures() + 1
+  })
+  return false
 }
 
 function probeWslStatus(): Promise<void> {
@@ -108,21 +126,20 @@ export function isWslAvailable(): boolean {
     return cached
   }
 
-  const previousFailures = previousWslAvailabilityFailures()
-
   if (process.platform !== 'win32') {
-    wslAvailableCache = { available: false, unsupported: true }
+    setWslAvailabilityCache({ available: false, unsupported: true })
     return false
   }
 
+  const generation = wslAvailabilityCacheGeneration
   try {
     execFileSync('wsl.exe', ['--status'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: WSL_AVAILABILITY_PROBE_TIMEOUT_MS
     })
-    return cacheWslAvailabilityProbeResult(null, previousFailures)
+    return cacheWslAvailabilityProbeResult(null, generation)
   } catch (error) {
-    return cacheWslAvailabilityProbeResult(error, previousFailures)
+    return cacheWslAvailabilityProbeResult(error, generation)
   }
 }
 
@@ -131,7 +148,7 @@ export function isWslAvailable(): boolean {
  *
  * Why: the renderer's capability read reaches this over IPC, and the sync probe blocks the
  * Electron main thread — every PTY message, window IPC and watchdog beat — for up to 5s on a
- * wedged wsl.exe. Concurrent callers share one spawn.
+ * wedged wsl.exe. Concurrent async callers share one spawn; prefer this over the sync twin.
  */
 export function isWslAvailableAsync(): Promise<boolean> {
   const cached = reusableWslAvailability()
@@ -140,7 +157,7 @@ export function isWslAvailableAsync(): Promise<boolean> {
   }
 
   if (process.platform !== 'win32') {
-    wslAvailableCache = { available: false, unsupported: true }
+    setWslAvailabilityCache({ available: false, unsupported: true })
     return Promise.resolve(false)
   }
 
@@ -148,10 +165,10 @@ export function isWslAvailableAsync(): Promise<boolean> {
     return wslAvailabilityProbeInFlight
   }
 
-  const previousFailures = previousWslAvailabilityFailures()
+  const generation = wslAvailabilityCacheGeneration
   wslAvailabilityProbeInFlight = probeWslStatus()
-    .then(() => cacheWslAvailabilityProbeResult(null, previousFailures))
-    .catch((error: unknown) => cacheWslAvailabilityProbeResult(error, previousFailures))
+    .then(() => cacheWslAvailabilityProbeResult(null, generation))
+    .catch((error: unknown) => cacheWslAvailabilityProbeResult(error, generation))
     .finally(() => {
       wslAvailabilityProbeInFlight = null
     })
@@ -176,13 +193,16 @@ export function getCachedWslAvailability(): boolean | null {
 // stale failure and let the next call re-probe. Non-empty lists are cached for the process
 // lifetime, so this cannot re-spawn the blocking probe more than once.
 export function dropStaleWslAvailabilityFailure(): void {
+  // Why: the bump is unconditional — a probe already in flight must not land its failure
+  // afterwards either, or the window the distro list just disproved comes back anyway.
+  wslAvailabilityCacheGeneration += 1
   if (wslAvailableCache && !wslAvailableCache.available && !('unsupported' in wslAvailableCache)) {
     wslAvailableCache = null
   }
 }
 
 export function _resetWslAvailabilityCacheForTests(): void {
-  wslAvailableCache = null
+  setWslAvailabilityCache(null)
   wslAvailabilityProbeInFlight = null
 }
 
@@ -190,10 +210,11 @@ export function _setWslAvailabilityCacheForTests(
   available: boolean | null | undefined,
   retryable: boolean
 ): void {
-  wslAvailableCache =
+  setWslAvailabilityCache(
     available === true
       ? { available: true }
       : available === false
         ? { available: false, cachedAt: Date.now(), retryable, failures: 1 }
         : null
+  )
 }

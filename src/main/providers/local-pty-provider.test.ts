@@ -97,7 +97,7 @@ vi.mock('../wsl', () => ({
   toWindowsWslPath: (path: string, distro: string) =>
     `\\\\wsl.localhost\\${distro}${path.replace(/\//g, '\\')}`,
   getDefaultWslDistro: () => 'Ubuntu',
-  isWslAvailable: () => true,
+  isWslAvailableAsync: () => Promise.resolve(true),
   // Why: WSL worktree validation now asks the distro; these tests use WSL UNC
   // cwds that are meant to exist, so report them present without spawning wsl.exe.
   wslUncDirectoryExists: () => true
