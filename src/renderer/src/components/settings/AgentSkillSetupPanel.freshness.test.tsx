@@ -25,7 +25,9 @@ function inventory(eligibleUpdateNames: string[]): SkillFreshnessInventory {
   return { schemaVersion: 1, installations: [], eligibleUpdateNames, scanIssues: [], scannedAt: 1 }
 }
 
-function panelProps(): ComponentProps<typeof AgentSkillSetupPanel> {
+function panelProps(
+  onRecheck: () => void | Promise<unknown> = vi.fn()
+): ComponentProps<typeof AgentSkillSetupPanel> {
   return {
     title: 'Linear skill',
     description: null,
@@ -39,7 +41,7 @@ function panelProps(): ComponentProps<typeof AgentSkillSetupPanel> {
     hideHeader: true,
     showRecheckWhenInstalled: true,
     freshnessSkillName: 'orca-linear',
-    onRecheck: vi.fn()
+    onRecheck
   }
 }
 
@@ -66,13 +68,22 @@ describe('AgentSkillSetupPanel freshness re-check', () => {
   })
 
   it('rescans skill freshness and updates the rendered verdict on re-check', async () => {
+    let completeRecheck: (() => void) | null = null
+    // Why: a rescan started before the install scan finishes would re-read the same
+    // pre-update disk state, so the boundary is what the assertions below pin.
+    const onRecheck = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          completeRecheck = resolve
+        })
+    )
     const freshnessInventory = vi
       .fn()
       .mockResolvedValueOnce(inventory(['orca-linear']))
       .mockResolvedValueOnce(inventory([]))
     window.api = { skills: { freshnessInventory } } as never
 
-    await act(async () => root?.render(<AgentSkillSetupPanel {...panelProps()} />))
+    await act(async () => root?.render(<AgentSkillSetupPanel {...panelProps(onRecheck)} />))
     await act(async () => {})
 
     expect(freshnessInventory).toHaveBeenCalledTimes(1)
@@ -85,6 +96,15 @@ describe('AgentSkillSetupPanel freshness re-check', () => {
 
     await act(async () => {
       recheck?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {})
+
+    expect(onRecheck).toHaveBeenCalledOnce()
+    expect(mocks.skillsRefreshed).not.toHaveBeenCalled()
+    expect(freshnessInventory).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      completeRecheck?.()
     })
     await act(async () => {})
 
