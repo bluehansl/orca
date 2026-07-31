@@ -626,9 +626,7 @@ export function connect(
         eventKeys: closeEvent.keys,
         eventStr: closeEvent.json
       })
-      lastWsClosedAt = closeAt
-      currentWsOpenedAt = null
-      handleSocketClosed(openingWs, { closeCode: e?.code })
+      handleSocketClosed(openingWs, { closeCode: e?.code, closedAt: closeAt })
     }
 
     ws.onerror = (event) => {
@@ -650,7 +648,7 @@ export function connect(
 
   function handleSocketClosed(
     closedWs: WebSocket,
-    opts: { timedOut?: boolean; closeCode?: number } = {}
+    opts: { timedOut?: boolean; closeCode?: number; closedAt?: number } = {}
   ) {
     if (ws !== closedWs) {
       console.log('[net] handleSocketClosed STALE — ignoring (ws already swapped)', {
@@ -659,6 +657,11 @@ export function connect(
       })
       return
     }
+    // Why: close diagnostics live here, not in ws.onclose, so the timeout paths that
+    // synthesize a close when RN omits onclose report the same msSinceLastClose. The
+    // stale check above is what stops a late real onclose from restamping them.
+    lastWsClosedAt = opts.closedAt ?? Date.now()
+    currentWsOpenedAt = null
     clearConnectTimer()
     ws = null
     sharedKey = null
