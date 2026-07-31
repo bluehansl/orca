@@ -18,6 +18,7 @@ import {
   exitTrailingEmptyOrderedListItem
 } from './rich-markdown-list-continuation'
 import { deleteAdjacentEmptyParagraph } from './rich-markdown-empty-paragraph-delete'
+import { deleteEmptyTableRowOnBackspace } from './rich-markdown-table-row-delete'
 import { handleRichMarkdownCitationKey } from './rich-markdown-citation-keyboard'
 import type { RichMarkdownHtmlSuperscriptLinkContext } from './rich-markdown-html-superscript-link-context'
 import { handleRichMarkdownLinkShortcut } from './rich-markdown-link-shortcut'
@@ -129,7 +130,8 @@ export function createRichMarkdownKeyHandler(
         !isComposingMarkdownInput(event, ed) &&
         (convertEmptyNestedOrderedItemToContinuation(ed) ||
           collapseEmptyListContinuationParagraph(ed) ||
-          deleteAdjacentEmptyParagraph(ed, 'backward'))
+          deleteAdjacentEmptyParagraph(ed, 'backward') ||
+          deleteEmptyTableRowOnBackspace(ed))
       ) {
         event.preventDefault()
         return true
