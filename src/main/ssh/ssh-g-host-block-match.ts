@@ -36,12 +36,16 @@ function localAccountName(): string | null {
  * those defaults — dialing the bare alias as the local user — whenever the block
  * is renamed, removed, or lives on another machine.
  *
- * Known limitation: the signals below read the *effective* config, so a wildcard
- * `Host *` supplying User/Port/ProxyCommand — or `CanonicalizeHostname yes` —
- * still reads as a match for an alias whose own block is gone. The reverse
- * verdict falls back to the stored snapshot, whose IdentityFile is used verbatim
- * (only `~` is expanded), so a stored path with OpenSSH tokens (%d/%h/%r) stays
- * unreadable — pre-existing behaviour, unchanged here.
+ * `resolveWithSshG(alias, { hostBlockEvidence: true })` answers this directly by
+ * diffing the alias against an unmatchable one, which cancels out wildcard and
+ * system-wide directives; the heuristics below only run when that differential
+ * verdict is missing (older callers, or a failed baseline probe). They read the
+ * *effective* config, so a wildcard `Host *` supplying User/Port/ProxyCommand
+ * still reads as a match for an alias whose own block is gone.
+ *
+ * Either way a negative verdict falls back to the stored snapshot, whose
+ * IdentityFile is used verbatim (only `~` is expanded), so a stored path with
+ * OpenSSH tokens (%d/%h/%r) stays unreadable — pre-existing behaviour, unchanged.
  */
 export function hasOpenSshHostBlockMatch(
   target: HostBlockMatchTarget,
@@ -49,6 +53,10 @@ export function hasOpenSshHostBlockMatch(
 ): boolean {
   if (!isOpenSshConfigBackedTarget(target) || !resolved) {
     return false
+  }
+  // Why: a differential probe observed the answer; the heuristics only guess at it.
+  if (resolved.hostBlockMatch !== undefined) {
+    return resolved.hostBlockMatch
   }
   // Why: an echoed hostname is the only field OpenSSH always emits, so an empty
   // one means the resolution never went through `ssh -G` (keep it authoritative).

@@ -548,7 +548,7 @@ describe('SshConnection', () => {
 
     await conn.connect()
 
-    expect(resolveWithSshG).toHaveBeenCalledWith('ssh-alias')
+    expect(resolveWithSshG).toHaveBeenCalledWith('ssh-alias', { hostBlockEvidence: true })
   })
 
   it('tries ssh-agent before reading an explicit private key', async () => {
@@ -1334,6 +1334,30 @@ describe('SshConnection', () => {
 
     await expect(conn.connect()).rejects.toThrow('System SSH probe failed (exit 1)')
     expect(conn.usesSystemSshTransport()).toBe(false)
+  })
+
+  // Without configHost, `ssh -G` resolved the display label while system SSH dialed target.host.
+  it('accepts GitHub restricted-shell SSH probes when only a display label resolved', async () => {
+    vi.mocked(resolveWithSshG).mockResolvedValueOnce(
+      createResolvedConfig({ hostname: 'GitHub (work)', user: LOCAL_ACCOUNT })
+    )
+    spawnSystemSshCommandMock.mockImplementation(() =>
+      createFailingSystemCommandChannel(1, 'Invalid command: echo ORCA-SYSTEM-SSH-OK')
+    )
+    const conn = new SshConnection(
+      createTarget({
+        label: 'GitHub (work)',
+        source: 'manual',
+        host: 'github.com',
+        username: 'git'
+      }),
+      createCallbacks()
+    )
+
+    await conn.connect()
+
+    expect(conn.getState().status).toBe('connected')
+    expect(conn.usesSystemSshTransport()).toBe(true)
   })
 
   it('accepts GitHub restricted-shell SSH probes when target username overrides resolved user', async () => {

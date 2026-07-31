@@ -100,7 +100,10 @@ function isGitHubRestrictedShellProbeSuccess(
     return false
   }
 
-  const resolvedHost = resolvedConfig?.hostname?.trim()
+  // Why: `ssh -G` ran against `configHost || label` while system SSH dials
+  // `configHost || host`, so the resolved hostname only describes the endpoint that
+  // answered when configHost is set; otherwise it just resolved a display label.
+  const resolvedHost = target.configHost ? resolvedConfig?.hostname?.trim() : undefined
   const hostCandidates = resolvedHost ? [resolvedHost] : [target.host, target.configHost]
 
   return hostCandidates.some((host) => {
@@ -630,9 +633,9 @@ export class SshConnection {
     this.proxyProcess = null
     const connectGeneration = ++this.connectGeneration
 
-    const resolved = await resolveWithSshG(this.target.configHost || this.target.label).catch(
-      () => null
-    )
+    const resolved = await resolveWithSshG(this.target.configHost || this.target.label, {
+      hostBlockEvidence: true
+    }).catch(() => null)
     if (shouldUseSystemSshTransport(this.target, resolved)) {
       await this.doSystemSshProbeWithControlMasterRetry(connectGeneration, resolved)
       return
@@ -1304,9 +1307,9 @@ export class SshConnection {
     this.useSystemSshTransport = false
     this.setState('connecting')
     try {
-      const resolved = await resolveWithSshG(this.target.configHost || this.target.label).catch(
-        () => null
-      )
+      const resolved = await resolveWithSshG(this.target.configHost || this.target.label, {
+        hostBlockEvidence: true
+      }).catch(() => null)
       if (!this.isCurrentConnectAttempt(connectGeneration)) {
         throw this.createCancelledConnectAttemptError()
       }

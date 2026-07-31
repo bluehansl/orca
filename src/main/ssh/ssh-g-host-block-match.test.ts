@@ -14,9 +14,15 @@ vi.mock('fs', () => ({
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args)
 }))
 
+const mockExecFile = vi.fn()
+
+vi.mock('child_process', () => ({
+  execFile: (...args: unknown[]) => mockExecFile(...args)
+}))
+
 import { buildConnectConfig, resolveEffectiveProxy } from './ssh-connection-utils'
 import type { SshTarget } from '../../shared/ssh-types'
-import type { SshResolvedConfig } from './ssh-config-parser'
+import { resolveWithSshG, type SshResolvedConfig } from './ssh-config-parser'
 
 const LOCAL_ACCOUNT = 'localdev'
 
@@ -75,6 +81,7 @@ describe('ssh -G host-block matching', () => {
     mockExistsSync.mockReturnValue(false)
     mockReadFileSync.mockReset()
     mockReadFileSync.mockImplementation((path: unknown) => Buffer.from(String(path)))
+    mockExecFile.mockReset()
   })
 
   afterEach(() => {
@@ -215,5 +222,163 @@ describe('ssh -G host-block matching', () => {
     expect(config.host).toBe('10.0.0.5')
     expect(config.port).toBe(2222)
     expect(config.username).toBe('deploy')
+  })
+})
+
+function sshGOutput(fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .map(([key, value]) => `${key} ${value}`)
+    .join('\n')
+}
+
+// Serves `ssh -G <host>`; returning null makes that resolution fail.
+function stubSshG(outputFor: (host: string) => string | null): void {
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const probedHost = (args[1] as string[])[2]!
+    const callback = args[3] as (err: Error | null, stdout: string) => void
+    const output = outputFor(probedHost)
+    if (output === null) {
+      callback(new Error('ssh -G failed'), '')
+    } else {
+      callback(null, output)
+    }
+    return { kill: vi.fn() }
+  })
+}
+
+// A config whose only directives live in `Host *`, so they apply to every alias.
+function wildcardOnlyConfig(host: string): string {
+  return sshGOutput({ host, hostname: host, user: 'ops', port: '22' })
+}
+
+describe('ssh -G differential host-block probe', () => {
+  beforeEach(() => {
+    vi.stubEnv('SSH_AUTH_SOCK', '')
+    vi.stubEnv('USER', LOCAL_ACCOUNT)
+    vi.stubEnv('LOGNAME', LOCAL_ACCOUNT)
+    vi.stubEnv('USERNAME', LOCAL_ACCOUNT)
+    mockExistsSync.mockReset()
+    mockExistsSync.mockReturnValue(false)
+    mockReadFileSync.mockReset()
+    mockReadFileSync.mockImplementation((path: unknown) => Buffer.from(String(path)))
+    mockExecFile.mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  // The original P1: `Host * / User ops` makes every unmatched alias look resolved.
+  it('keeps stored fields when a wildcard block is the only source of User', async () => {
+    stubSshG(wildcardOnlyConfig)
+
+    const resolved = await resolveWithSshG('prod', { hostBlockEvidence: true })
+    expect(resolved?.hostBlockMatch).toBe(false)
+
+    const config = buildConnectConfig(storedTarget(), resolved, {
+      includeAgent: false,
+      includePrivateKey: true
+    })
+
+    expect({
+      host: config.host,
+      port: config.port,
+      username: config.username
+    }).toEqual({
+      host: '10.0.0.5',
+      port: 2222,
+      username: 'deploy'
+    })
+  })
+
+  // `Host * / HostName %h.internal` expands against whichever alias was probed.
+  it('keeps stored fields when a wildcard HostName only echoes the probed alias', async () => {
+    stubSshG((host) => sshGOutput({ host, hostname: `${host}.internal`, port: '22' }))
+
+    const resolved = await resolveWithSshG('prod', { hostBlockEvidence: true })
+
+    expect(resolved?.hostBlockMatch).toBe(false)
+    expect(
+      buildConnectConfig(storedTarget(), resolved, {
+        includeAgent: false,
+        includePrivateKey: true
+      }).host
+    ).toBe('10.0.0.5')
+  })
+
+  it('applies fresh OpenSSH values when a block still names the alias', async () => {
+    stubSshG((host) =>
+      host === 'prod'
+        ? sshGOutput({
+            host,
+            hostname: '10.9.9.9',
+            user: 'ops',
+            port: '2200',
+            identityfile: '/keys/current-first'
+          })
+        : wildcardOnlyConfig(host)
+    )
+
+    const resolved = await resolveWithSshG('prod', { hostBlockEvidence: true })
+    expect(resolved?.hostBlockMatch).toBe(true)
+
+    const config = buildConnectConfig(storedTarget(), resolved, {
+      includeAgent: false,
+      includePrivateKey: true
+    })
+
+    expect({
+      host: config.host,
+      port: config.port,
+      username: config.username
+    }).toEqual({
+      host: '10.9.9.9',
+      port: 2200,
+      username: 'ops'
+    })
+    // Why: #11297 — the first IdentityFile directive still wins over the stored snapshot.
+    expect(config.privateKey).toEqual(Buffer.from('/keys/current-first'))
+  })
+
+  it('detects an alias-specific block that only adds an IdentityFile', async () => {
+    stubSshG((host) =>
+      sshGOutput(
+        host === 'prod'
+          ? {
+              host,
+              hostname: host,
+              user: 'ops',
+              port: '22',
+              identityfile: '/keys/prod-only'
+            }
+          : { host, hostname: host, user: 'ops', port: '22' }
+      )
+    )
+
+    expect((await resolveWithSshG('prod', { hostBlockEvidence: true }))?.hostBlockMatch).toBe(true)
+  })
+
+  it('leaves the verdict unset when the baseline probe fails', async () => {
+    stubSshG((host) => (host === 'prod' ? wildcardOnlyConfig(host) : null))
+
+    const resolved = await resolveWithSshG('prod', { hostBlockEvidence: true })
+
+    expect(resolved?.hostBlockMatch).toBeUndefined()
+    // Falls back to the effective-config heuristic, which reads `ops` as a match.
+    expect(
+      buildConnectConfig(storedTarget(), resolved, {
+        includeAgent: false,
+        includePrivateKey: true
+      }).username
+    ).toBe('ops')
+  })
+
+  it('skips the baseline probe when no evidence was requested', async () => {
+    stubSshG(wildcardOnlyConfig)
+
+    const resolved = await resolveWithSshG('prod')
+
+    expect(resolved?.hostBlockMatch).toBeUndefined()
+    expect(mockExecFile).toHaveBeenCalledTimes(1)
   })
 })
