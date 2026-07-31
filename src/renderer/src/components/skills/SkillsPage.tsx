@@ -305,8 +305,8 @@ export default function SkillsPage(): React.JSX.Element {
           {remoteSkippedSources.length > 0 ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  type="button"
+                <span
+                  tabIndex={0}
                   aria-label={remoteSkippedTooltip}
                   className="cursor-help rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 >
@@ -322,7 +322,7 @@ export default function SkillsPage(): React.JSX.Element {
                           { value0: remoteSkippedSources.length }
                         )}
                   </IntegrationStatusPill>
-                </button>
+                </span>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={4}>
                 {remoteSkippedTooltip}

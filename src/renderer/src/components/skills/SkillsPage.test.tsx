@@ -192,10 +192,11 @@ describe('SkillsPage', () => {
     await flushMicrotasks()
 
     expect(container?.textContent).toContain('1 remote repo not scanned')
-    const skippedRepoTrigger = container?.querySelector<HTMLButtonElement>(
-      'button[aria-label*="api-server"]'
+    const skippedRepoTrigger = container?.querySelector<HTMLElement>(
+      '[tabindex="0"][aria-label*="api-server"]'
     )
     expect(skippedRepoTrigger).not.toBeNull()
+    expect(skippedRepoTrigger?.tagName).toBe('SPAN')
     expect(skippedRepoTrigger?.hasAttribute('title')).toBe(false)
   })
 
