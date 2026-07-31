@@ -4,8 +4,7 @@ import { isInTable, moveCellForward, nextCell, selectionCell } from '@tiptap/pm/
 
 function moveToVerticalNeighbor(editor: Editor, direction: 1 | -1): boolean {
   const { state, view } = editor
-  const $cell = selectionCell(state)
-  const $nextCell = $cell ? nextCell($cell, 'vert', direction) : null
+  const $nextCell = nextCell(selectionCell(state), 'vert', direction)
   if (!$nextCell) {
     return false
   }

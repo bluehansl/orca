@@ -1,128 +1,64 @@
 import type { Editor } from '@tiptap/react'
-import type { Node as PmNode, ResolvedPos } from '@tiptap/pm/model'
+import type { Node as PmNode } from '@tiptap/pm/model'
+import { isInTable, selectionCell } from '@tiptap/pm/tables'
 
-const TABLE_CELL_TYPES = new Set(['tableCell', 'tableHeader'])
-
-function isEmptyTableCell(cell: PmNode): boolean {
-  return cell.textContent.length === 0
+/** Why: textContent alone is empty for image/embed-only cells, which do have content. */
+function isEmptyCell(cell: PmNode): boolean {
+  for (let index = 0; index < cell.childCount; index += 1) {
+    const child = cell.child(index)
+    if (!child.isTextblock || child.content.size > 0) {
+      return false
+    }
+  }
+  return true
 }
 
-function isEmptyTableRow(row: PmNode): boolean {
+function isEmptyRow(row: PmNode): boolean {
   for (let index = 0; index < row.childCount; index += 1) {
-    if (!isEmptyTableCell(row.child(index))) {
+    if (!isEmptyCell(row.child(index))) {
       return false
     }
   }
   return row.childCount > 0
 }
 
-function findTableContext($from: ResolvedPos): {
-  cellDepth: number
-  rowDepth: number
-  tableDepth: number
-} | null {
-  let cellDepth = -1
-  let rowDepth = -1
-  let tableDepth = -1
-
-  for (let depth = $from.depth; depth > 0; depth -= 1) {
-    const name = $from.node(depth).type.name
-    if (cellDepth < 0 && TABLE_CELL_TYPES.has(name)) {
-      cellDepth = depth
-    } else if (rowDepth < 0 && name === 'tableRow') {
-      rowDepth = depth
-    } else if (tableDepth < 0 && name === 'table') {
-      tableDepth = depth
-    }
-  }
-
-  if (cellDepth < 0 || rowDepth < 0 || tableDepth < 0) {
-    return null
-  }
-
-  return { cellDepth, rowDepth, tableDepth }
-}
-
 /**
  * Structural Backspace inside tables:
- * 1. Fully empty row → delete row (or table if last row)
- * 2. Empty cell at start with non-empty siblings → previous cell
- * 3. Otherwise leave to default content delete
+ * 1. Fully empty row → delete row (or the table if it was the last row)
+ * 2. Empty cell in a row that still has content → step to the previous cell
+ * 3. Otherwise fall through to the default content delete
  */
 export function handleRichMarkdownTableBackspace(editor: Editor): boolean {
-  const { selection } = editor.state
-  if (!selection.empty) {
+  const { state } = editor
+  if (!state.selection.empty || !isInTable(state)) {
     return false
   }
 
-  const { $from } = selection
-  if (!$from.parent.isTextblock || $from.parentOffset !== 0) {
+  // selectionCell resolves *before* the cell: nodeAfter is the cell, parent the
+  // row, node(-1) the table.
+  const $cell = selectionCell(state)
+  const cell = $cell.nodeAfter
+  if (!cell || !isEmptyCell(cell)) {
     return false
   }
 
-  const context = findTableContext($from)
-  if (!context) {
+  // $cell.pos + 2 is the start of the cell's first textblock. A caret past it
+  // sits in a second empty paragraph, which should join rather than drop a row.
+  if (state.selection.from !== $cell.pos + 2) {
     return false
   }
 
-  const cell = $from.node(context.cellDepth)
-  if (!isEmptyTableCell(cell)) {
-    return false
-  }
-
-  const row = $from.node(context.rowDepth)
-  if (isEmptyTableRow(row)) {
-    return deleteEmptyTableRow(editor, context.tableDepth)
-  }
-
-  // Empty cell in a non-empty row: step back a cell instead of joining across
-  // the cell boundary into previous-cell text.
-  if (editor.commands.goToPreviousCell()) {
+  if (!isEmptyRow($cell.parent)) {
+    // Step back a cell instead of joining across the cell boundary into the
+    // previous cell's text. Consume either way so ProseMirror never merges the
+    // table into whatever precedes it.
+    editor.commands.goToPreviousCell()
     return true
   }
 
-  // First cell of the table and empty: consume so ProseMirror doesn't try to
-  // delete or merge the table node.
-  return true
-}
-
-/** Empty-row-only path used by focused unit tests. */
-export function deleteEmptyTableRowOnBackspace(editor: Editor): boolean {
-  const { selection } = editor.state
-  if (!selection.empty) {
-    return false
-  }
-
-  const { $from } = selection
-  if (!$from.parent.isTextblock || $from.parentOffset !== 0) {
-    return false
-  }
-
-  const context = findTableContext($from)
-  if (!context) {
-    return false
-  }
-
-  const cell = $from.node(context.cellDepth)
-  if (!isEmptyTableCell(cell)) {
-    return false
-  }
-
-  const row = $from.node(context.rowDepth)
-  if (!isEmptyTableRow(row)) {
-    return false
-  }
-
-  return deleteEmptyTableRow(editor, context.tableDepth)
-}
-
-function deleteEmptyTableRow(editor: Editor, tableDepth: number): boolean {
-  const table = editor.state.selection.$from.node(tableDepth)
-  // Why: prosemirror-tables deleteRow refuses when the selection spans the
-  // only remaining row; deleteTable is the correct last-row exit.
-  if (table.childCount <= 1) {
-    return editor.commands.deleteTable()
-  }
-
-  return editor.commands.deleteRow()
+  // Why: prosemirror-tables deleteRow refuses when only one row remains;
+  // deleteTable is the correct last-row exit.
+  return $cell.node(-1).childCount <= 1
+    ? editor.commands.deleteTable()
+    : editor.commands.deleteRow()
 }

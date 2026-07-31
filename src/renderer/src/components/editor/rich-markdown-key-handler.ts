@@ -169,8 +169,15 @@ export function createRichMarkdownKeyHandler(
         return true
       }
       // Why: table Enter (cell below / add row) must run before ProseMirror
-      // inserts an in-cell paragraph that GFM serialization cannot keep.
-      if (ed && !isComposingMarkdownInput(event, ed) && handleRichMarkdownTableEnter(ed)) {
+      // inserts an in-cell paragraph that GFM serialization cannot keep — but
+      // the slash/doc-link menus own Enter while open (their blocks run later).
+      if (
+        ed &&
+        !ctx.slashMenuRef.current &&
+        !ctx.docLinkMenuRef.current &&
+        !isComposingMarkdownInput(event, ed) &&
+        handleRichMarkdownTableEnter(ed)
+      ) {
         event.preventDefault()
         return true
       }

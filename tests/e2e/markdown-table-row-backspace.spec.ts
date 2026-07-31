@@ -22,82 +22,6 @@ const SCRATCH_DIR =
   process.env.ORCA_TABLE_ROW_BACKSPACE_SCREENSHOT_DIR ??
   path.join(process.cwd(), 'test-results', 'table-row-backspace')
 
-async function placeCaretInCellWithText(
-  page: {
-    evaluate: (fn: (text: string) => void, text: string) => Promise<void>
-  },
-  text: string
-): Promise<void> {
-  await page.evaluate((cellText) => {
-    const editorRoot = document.querySelector('.rich-markdown-editor')
-    if (!editorRoot) {
-      throw new Error('Rich markdown editor was not mounted')
-    }
-
-    const walker = document.createTreeWalker(editorRoot, NodeFilter.SHOW_TEXT)
-    let textNode: Text | null = null
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text
-      if (node.textContent === cellText && node.parentElement?.closest('td, th')) {
-        textNode = node
-        break
-      }
-    }
-    if (!textNode) {
-      throw new Error(`Expected table cell text: ${cellText}`)
-    }
-
-    const selection = window.getSelection()
-    if (!selection) {
-      throw new Error('window.getSelection() is unavailable')
-    }
-    const range = document.createRange()
-    range.setStart(textNode, 0)
-    range.collapse(true)
-    selection.removeAllRanges()
-    selection.addRange(range)
-    editorRoot.dispatchEvent(new Event('focusin', { bubbles: true }))
-  }, text)
-}
-
-async function placeCaretInEmptyBodyRow(page: {
-  evaluate: (fn: () => void) => Promise<void>
-}): Promise<void> {
-  await page.evaluate(() => {
-    const editorRoot = document.querySelector('.rich-markdown-editor')
-    if (!editorRoot) {
-      throw new Error('Rich markdown editor was not mounted')
-    }
-    const rows = Array.from(editorRoot.querySelectorAll('tr'))
-    const emptyRow = rows.find((row) => {
-      const cells = Array.from(row.querySelectorAll('td, th'))
-      return (
-        cells.length > 0 &&
-        cells.every((cell) => (cell.textContent ?? '').trim().length === 0) &&
-        row.querySelector('td') != null
-      )
-    })
-    if (!emptyRow) {
-      throw new Error('Expected an empty body table row')
-    }
-    const textblock = emptyRow.querySelector('p') ?? emptyRow.querySelector('td')
-    if (!textblock) {
-      throw new Error('Expected a caret target in the empty row')
-    }
-    const selection = window.getSelection()
-    if (!selection) {
-      throw new Error('window.getSelection() is unavailable')
-    }
-    const range = document.createRange()
-    range.selectNodeContents(textblock)
-    range.collapse(true)
-    selection.removeAllRanges()
-    selection.addRange(range)
-    ;(textblock as HTMLElement).focus?.()
-    editorRoot.dispatchEvent(new Event('focusin', { bubbles: true }))
-  })
-}
-
 async function selectionCellText(page: {
   evaluate: (fn: () => string | null) => Promise<string | null>
 }): Promise<string | null> {
@@ -155,8 +79,7 @@ test.describe('Markdown table keyboard', () => {
       await expect(editor.getByText('stay')).toBeVisible()
 
       // ── Tab / Shift-Tab cell navigation ────────────────────────────
-      await editor.click()
-      await placeCaretInCellWithText(orcaPage, 'keep')
+      await editor.getByText('keep').click()
 
       await orcaPage.keyboard.press('Tab')
       await expect
@@ -193,8 +116,7 @@ test.describe('Markdown table keyboard', () => {
         .toBe('')
 
       // ── Empty-row Backspace deletes the whole row ──────────────────
-      await placeCaretInEmptyBodyRow(orcaPage)
-
+      // Enter above already left the caret in the empty body row.
       await editor.screenshot({
         path: path.join(SCRATCH_DIR, 'electron-table-row-backspace-before.png')
       })
