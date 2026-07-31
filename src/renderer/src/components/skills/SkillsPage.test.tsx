@@ -182,7 +182,7 @@ describe('SkillsPage', () => {
   it('surfaces repos the scan skipped as remote instead of hiding them (#11466)', async () => {
     const discover = vi
       .fn()
-      .mockResolvedValue(discoveryResult(['local-skill'], [remoteSkippedSource('Repo api-server')]))
+      .mockResolvedValue(discoveryResult([], [remoteSkippedSource('Repo api-server')]))
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: { skills: { discover }, runtimeEnvironments: { call: vi.fn() } }
@@ -198,6 +198,11 @@ describe('SkillsPage', () => {
     expect(skippedRepoTrigger).not.toBeNull()
     expect(skippedRepoTrigger?.tagName).toBe('SPAN')
     expect(skippedRepoTrigger?.hasAttribute('title')).toBe(false)
+    expect(container?.textContent).toContain('No skills found in scanned folders')
+    expect(container?.textContent).toContain('Remote repository skill folders were not scanned.')
+    expect(container?.textContent).not.toContain(
+      'Checked home, repository, bundled, and plugin skill folders.'
+    )
   })
 
   it('shows no skipped-repo chip when every source is local', async () => {

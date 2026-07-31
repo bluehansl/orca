@@ -29,10 +29,12 @@ const EMPTY_SKILLS: DiscoveredSkill[] = []
 function EmptyState({
   loading,
   hasSkills,
+  hasRemoteSkippedRepos,
   onRefresh
 }: {
   loading: boolean
   hasSkills: boolean
+  hasRemoteSkippedRepos: boolean
   onRefresh: () => void
 }): React.JSX.Element {
   return (
@@ -49,7 +51,12 @@ function EmptyState({
               ? translate('auto.components.skills.SkillsPage.cd7893fbc1', 'Scanning skills')
               : hasSkills
                 ? translate('auto.components.skills.SkillsPage.6a62a0168c', 'No matches')
-                : translate('auto.components.skills.SkillsPage.4acd6d68ec', 'No skills found')}
+                : hasRemoteSkippedRepos
+                  ? translate(
+                      'auto.components.skills.SkillsPage.61c24a26eb',
+                      'No skills found in scanned folders'
+                    )
+                  : translate('auto.components.skills.SkillsPage.4acd6d68ec', 'No skills found')}
           </h3>
           <p className="text-xs leading-5 text-muted-foreground">
             {hasSkills
@@ -57,10 +64,15 @@ function EmptyState({
                   'auto.components.skills.SkillsPage.08a321a984',
                   'Adjust the search or filters.'
                 )
-              : translate(
-                  'auto.components.skills.SkillsPage.ab5b777350',
-                  'Checked home, repository, bundled, and plugin skill folders.'
-                )}
+              : hasRemoteSkippedRepos
+                ? translate(
+                    'auto.components.skills.SkillsPage.5e258b2f46',
+                    'Remote repository skill folders were not scanned.'
+                  )
+                : translate(
+                    'auto.components.skills.SkillsPage.ab5b777350',
+                    'Checked home, repository, bundled, and plugin skill folders.'
+                  )}
           </p>
         </div>
         {!loading ? (
@@ -343,6 +355,7 @@ export default function SkillsPage(): React.JSX.Element {
           <EmptyState
             loading={loading}
             hasSkills={skills.length > 0}
+            hasRemoteSkippedRepos={remoteSkippedSources.length > 0}
             onRefresh={() => void loadSkills()}
           />
         )}
