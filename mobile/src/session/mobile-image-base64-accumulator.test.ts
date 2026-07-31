@@ -1,7 +1,9 @@
-// eslint-disable-next-line unicorn/prefer-node-protocol -- Match the Metro-safe production import.
-import { Buffer } from 'buffer'
 import { describe, expect, it } from 'vitest'
 import { MobileImageBase64Accumulator } from './mobile-image-base64-accumulator'
+
+function decodeBase64(data: string): Uint8Array {
+  return Uint8Array.from(atob(data), (character) => character.charCodeAt(0))
+}
 
 describe('MobileImageBase64Accumulator', () => {
   it('preserves bytes split across non-aligned source chunks', () => {
@@ -10,7 +12,7 @@ describe('MobileImageBase64Accumulator', () => {
     accumulator.append(new Uint8Array([2, 3]))
     accumulator.append(new Uint8Array([4, 5]))
 
-    expect(accumulator.finish()).toBe(Buffer.from([1, 2, 3, 4, 5]).toString('base64'))
+    expect(accumulator.finish()).toBe('AQIDBAU=')
   })
 
   it('preserves bytes across internal staging flushes', () => {
@@ -22,6 +24,6 @@ describe('MobileImageBase64Accumulator', () => {
     accumulator.append(bytes.subarray(0, 123_457))
     accumulator.append(bytes.subarray(123_457))
 
-    expect(accumulator.finish()).toBe(Buffer.from(bytes).toString('base64'))
+    expect(decodeBase64(accumulator.finish())).toEqual(bytes)
   })
 })

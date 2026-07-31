@@ -1,7 +1,22 @@
-// eslint-disable-next-line unicorn/prefer-node-protocol -- Metro cannot resolve node:buffer.
-import { Buffer } from 'buffer'
-
+const MOBILE_IMAGE_BASE64_BINARY_CHUNK_BYTES = 8190
 const MOBILE_IMAGE_BASE64_CHUNK_BYTES = 256 * 1024 - 1
+
+function encodeMobileImageBytes(bytes: Uint8Array): string {
+  const encoded: string[] = []
+  for (
+    let offset = 0;
+    offset < bytes.byteLength;
+    offset += MOBILE_IMAGE_BASE64_BINARY_CHUNK_BYTES
+  ) {
+    const end = Math.min(offset + MOBILE_IMAGE_BASE64_BINARY_CHUNK_BYTES, bytes.byteLength)
+    let binary = ''
+    for (let index = offset; index < end; index += 1) {
+      binary += String.fromCharCode(bytes[index]!)
+    }
+    encoded.push(btoa(binary))
+  }
+  return encoded.join('')
+}
 
 export class MobileImageBase64Accumulator {
   private readonly staging = new Uint8Array(MOBILE_IMAGE_BASE64_CHUNK_BYTES)
@@ -33,9 +48,7 @@ export class MobileImageBase64Accumulator {
     if (this.stagingLength === 0) {
       return
     }
-    this.encodedChunks.push(
-      Buffer.from(this.staging.subarray(0, this.stagingLength)).toString('base64')
-    )
+    this.encodedChunks.push(encodeMobileImageBytes(this.staging.subarray(0, this.stagingLength)))
     this.stagingLength = 0
   }
 }
