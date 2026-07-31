@@ -1,3 +1,4 @@
+// eslint-disable-next-line unicorn/prefer-node-protocol -- Match the Metro-safe production import.
 import { Buffer } from 'buffer'
 import { describe, expect, it } from 'vitest'
 import { MobileImageBase64Accumulator } from './mobile-image-base64-accumulator'

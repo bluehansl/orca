@@ -1,3 +1,4 @@
+// eslint-disable-next-line unicorn/prefer-node-protocol -- Metro cannot resolve node:buffer.
 import { Buffer } from 'buffer'
 
 const MOBILE_IMAGE_BASE64_CHUNK_BYTES = 256 * 1024 - 1
