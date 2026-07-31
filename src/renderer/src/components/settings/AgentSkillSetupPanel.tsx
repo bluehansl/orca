@@ -6,12 +6,9 @@ import { SkillFreshnessStatusPill } from '../skills/SkillFreshnessStatusPill'
 import { OnboardingInlineCommandTerminal } from '../onboarding/OnboardingInlineCommandTerminal'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import {
-  notifyInstalledAgentSkillsChanged,
-  notifyInstalledAgentSkillsRefreshed
-} from '@/hooks/useInstalledAgentSkills'
+import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { useMountedRef } from '@/hooks/useMountedRef'
-import { refreshSkillFreshness } from '@/hooks/useSkillFreshness'
+import { syncSurfacesAfterAgentSkillRecheck } from './agent-skill-recheck-surface-sync'
 import { isOrcaCliAvailableOnPath } from '@/lib/agent-skill-cli-prerequisite'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
@@ -233,13 +230,7 @@ export function AgentSkillSetupPanel({
           className="gap-1.5"
           onClick={() => {
             void Promise.resolve(onRecheck()).then(() => {
-              // Reuse the completed scan so sibling surfaces sync without rediscovery.
-              notifyInstalledAgentSkillsRefreshed()
-              // Why: that event never reaches the freshness store, and the pill this
-              // panel renders would otherwise keep its pre-click verdict forever.
-              if (freshnessSkillName) {
-                void refreshSkillFreshness()
-              }
+              syncSurfacesAfterAgentSkillRecheck(freshnessSkillName)
             })
           }}
           disabled={loading}
