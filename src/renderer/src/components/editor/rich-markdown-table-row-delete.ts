@@ -13,6 +13,10 @@ function isEmptyCell(cell: PmNode): boolean {
   return true
 }
 
+function isHeaderRow(row: PmNode): boolean {
+  return row.firstChild?.type.spec.tableRole === 'header_cell'
+}
+
 function isEmptyRow(row: PmNode): boolean {
   for (let index = 0; index < row.childCount; index += 1) {
     if (!isEmptyCell(row.child(index))) {
@@ -58,7 +62,15 @@ export function handleRichMarkdownTableBackspace(editor: Editor): boolean {
 
   // Why: prosemirror-tables deleteRow refuses when only one row remains;
   // deleteTable is the correct last-row exit.
-  return $cell.node(-1).childCount <= 1
-    ? editor.commands.deleteTable()
-    : editor.commands.deleteRow()
+  if ($cell.node(-1).childCount <= 1) {
+    return editor.commands.deleteTable()
+  }
+
+  // Why: GFM re-synthesizes an empty header on serialize, so deleting the
+  // header row would vanish from the editor but return on the next reload.
+  if (isHeaderRow($cell.parent)) {
+    return true
+  }
+
+  return editor.commands.deleteRow()
 }

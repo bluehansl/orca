@@ -208,6 +208,24 @@ describe('handleRichMarkdownTableBackspace', () => {
     })
   })
 
+  it('keeps an emptied header row while body rows remain', () => {
+    withEditor(
+      `|  |  |
+| --- | --- |
+| keep | a |
+| stay | c |
+`,
+      (editor) => {
+        const before = editor.getMarkdown()
+        editor.commands.setTextSelection(caretInRow(editor, (text) => text.length === 0))
+        // Consumed so ProseMirror cannot merge the table into what precedes it.
+        expect(handleRichMarkdownTableBackspace(editor)).toBe(true)
+        expect(countRows(editor)).toBe(3)
+        expect(editor.getMarkdown()).toBe(before)
+      }
+    )
+  })
+
   it('does not hijack Backspace when the current cell still has content', () => {
     withEditor(TABLE_WITH_EMPTY_ROW, (editor) => {
       editor.commands.setTextSelection(caretAtText(editor, 'keep'))
