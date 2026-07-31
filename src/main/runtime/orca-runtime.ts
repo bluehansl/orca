@@ -25651,7 +25651,8 @@ export class OrcaRuntimeService {
       sendTerminal: (handle, action) => this.sendTerminal(handle, action),
       focusTerminal: (handle) => this.focusTerminal(handle),
       closeTerminal: (handle) => this.closeTerminal(handle),
-      showTerminal: (handle) => this.showTerminal(handle)
+      showTerminal: (handle) => this.showTerminal(handle),
+      resolveTerminalHandleForPaneKey: (paneKey) => this.getTerminalHandleForPaneKey(paneKey)
     })
   }
 
@@ -25665,12 +25666,14 @@ export class OrcaRuntimeService {
     }
     return await this.prepareClaudeAgentTeamsLeaderForHandle({
       handle,
+      paneKey: args.paneKey,
       baseEnv: args.baseEnv
     })
   }
 
   async prepareClaudeAgentTeamsLeaderForHandle(args: {
     handle: string
+    paneKey?: string
     baseEnv?: Record<string, string>
   }): Promise<{ env: Record<string, string> }> {
     const baseEnv = {
@@ -25681,6 +25684,7 @@ export class OrcaRuntimeService {
     const shimBin = resolveClaudeAgentTeamsShimBin(baseEnv)
     return this.claudeAgentTeams.createLaunchEnv({
       leaderHandle: args.handle,
+      leaderPaneKey: args.paneKey,
       baseEnv,
       shimDir,
       shimBin

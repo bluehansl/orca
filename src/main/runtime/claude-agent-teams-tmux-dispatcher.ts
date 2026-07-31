@@ -10,6 +10,7 @@ import {
   resolveSplitTarget,
   updateMainVerticalAfterSplit
 } from './claude-agent-teams-pane-layout'
+import { withFreshPaneHandle } from './claude-agent-teams-pane-handle-remint'
 import type { AgentTeam, AgentTeamsTerminalApi, TeamPane } from './claude-agent-teams-types'
 
 type ResolvedTarget = { type: 'pane'; pane: TeamPane } | { type: 'window' }
@@ -113,13 +114,15 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     const fakePaneId = `%${team.nextPaneNumber}`
     team.nextPaneNumber += 1
     const splitTarget = resolveSplitTarget(team, targetPane, parsed.flags.has('-h'))
-    const split = await api.splitTerminal(splitTarget.pane.handle, {
-      direction: splitTarget.direction,
-      command: parsed.positional.join(' ') || undefined,
-      env: paneEnv(team, fakePaneId),
-      envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
-      activate: false
-    })
+    const split = await withFreshPaneHandle(team, splitTarget.pane, api, (handle) =>
+      api.splitTerminal(handle, {
+        direction: splitTarget.direction,
+        command: parsed.positional.join(' ') || undefined,
+        env: paneEnv(team, fakePaneId),
+        envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
+        activate: false
+      })
+    )
     const pane: TeamPane = {
       fakePaneId,
       handle: split.handle,
@@ -164,13 +167,15 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     // split leaves the fake pane id pointing at a still-live terminal; on cleanup
     // failure, discard the new split and keep the placeholder registered.
     const previousHandle = pane.handle
-    const split = await api.splitTerminal(origin.handle, {
-      direction: pane.splitDirection ?? 'horizontal',
-      command,
-      env: paneEnv(team, pane.fakePaneId),
-      envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
-      activate: false
-    })
+    const split = await withFreshPaneHandle(team, origin, api, (handle) =>
+      api.splitTerminal(handle, {
+        direction: pane.splitDirection ?? 'horizontal',
+        command,
+        env: paneEnv(team, pane.fakePaneId),
+        envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
+        activate: false
+      })
+    )
     try {
       await api.closeTerminal(previousHandle)
     } catch (error) {
@@ -221,7 +226,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     const text = tmuxSendKeysText(parsed.positional, parsed.flags.has('-l'))
     if (text) {
-      await api.sendTerminal(pane.handle, { text })
+      await withFreshPaneHandle(team, pane, api, (handle) => api.sendTerminal(handle, { text }))
     }
     return ''
   }
@@ -234,7 +239,9 @@ export class ClaudeAgentTeamsTmuxDispatcher {
   ): Promise<string> {
     const parsed = parseTmuxArgs(args, ['-E', '-S', '-t'], ['-J', '-N', '-p'])
     const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
-    const read = await api.readTerminal(pane.handle, { limit: 1000 })
+    const read = await withFreshPaneHandle(team, pane, api, (handle) =>
+      api.readTerminal(handle, { limit: 1000 })
+    )
     const text = read.tail.join('\n')
     return parsed.flags.has('-p') ? `${text}\n` : ''
   }
@@ -251,7 +258,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     }
     const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     team.previouslyFocusedPane = envPane
-    await api.focusTerminal(pane.handle)
+    await withFreshPaneHandle(team, pane, api, (handle) => api.focusTerminal(handle))
     return ''
   }
 
@@ -284,7 +291,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     parseTmuxArgs(args, ['-t'], [])
     const pane = team.previouslyFocusedPane ? team.panes.get(team.previouslyFocusedPane) : null
     if (pane) {
-      await api.focusTerminal(pane.handle)
+      await withFreshPaneHandle(team, pane, api, (handle) => api.focusTerminal(handle))
     }
     return ''
   }

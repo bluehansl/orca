@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeAgentTeamsService, type AgentTeamsTerminalApi } from './claude-agent-teams-service'
 
-function createServiceWithLeader(): {
+function createServiceWithLeader(options?: {
+  leaderPaneKey?: string
+  resolveTerminalHandleForPaneKey?: (paneKey: string) => string | null
+}): {
   service: ClaudeAgentTeamsService
   teamId: string
   token: string
@@ -12,6 +15,7 @@ function createServiceWithLeader(): {
   const service = new ClaudeAgentTeamsService()
   const launch = service.createLaunchEnv({
     leaderHandle: 'leader-handle',
+    leaderPaneKey: options?.leaderPaneKey,
     baseEnv: { PATH: '/usr/bin' },
     shimDir: '/tmp/orca-shim',
     shimBin: '/usr/bin/orca'
@@ -60,7 +64,10 @@ function createServiceWithLeader(): {
       paneRuntimeId: -1,
       ptyId: 'pty-1',
       rendererGraphEpoch: 1
-    }))
+    })),
+    ...(options?.resolveTerminalHandleForPaneKey
+      ? { resolveTerminalHandleForPaneKey: vi.fn(options.resolveTerminalHandleForPaneKey) }
+      : {})
   }
   return {
     service,
@@ -247,5 +254,76 @@ describe('ClaudeAgentTeamsService', () => {
         api
       )
     ).resolves.toMatchObject({ ok: false, exitCode: 1 })
+  })
+
+  it('remints a stale leader handle via its pane key and retries the split', async () => {
+    const { service, teamId, token, leaderPane, api, splitCalls } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => 'leader-handle-2'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    vi.mocked(api.splitTerminal).mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    await expect(
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ).resolves.toMatchObject({ stdout: '%2\n', exitCode: 0 })
+    expect(api.resolveTerminalHandleForPaneKey).toHaveBeenCalledWith('tab-1:leaf-leader')
+    expect(splitCalls.map((call) => call.handle)).toEqual(['leader-handle-2'])
+
+    // the reminted handle is persisted — later leader operations use it directly.
+    await request(['send-keys', '-t', leaderPane, '-l', 'hello'])
+    expect(vi.mocked(api.sendTerminal).mock.calls.map(([handle]) => handle)).toEqual([
+      'leader-handle-2'
+    ])
+    expect(vi.mocked(api.resolveTerminalHandleForPaneKey!).mock.calls).toHaveLength(1)
+  })
+
+  it('propagates stale errors when the pane has no pane key to remint from', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader()
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    vi.mocked(api.splitTerminal).mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    await expect(
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ).resolves.toMatchObject({
+      ok: false,
+      exitCode: 1,
+      stderr: 'tmux: terminal_handle_stale\n'
+    })
+  })
+
+  it('does not retry when the pane key resolves to the same stale handle', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => 'leader-handle'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    vi.mocked(api.splitTerminal).mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    await expect(
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ).resolves.toMatchObject({ ok: false, exitCode: 1 })
+    expect(api.splitTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('remints a stale leader handle for send-keys as well', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => 'leader-handle-2'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    vi.mocked(api.sendTerminal).mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    await expect(request(['send-keys', '-t', leaderPane, '-l', 'hello'])).resolves.toMatchObject({
+      exitCode: 0
+    })
+    expect(vi.mocked(api.sendTerminal).mock.calls.map(([handle]) => handle)).toEqual([
+      'leader-handle',
+      'leader-handle-2'
+    ])
   })
 })
