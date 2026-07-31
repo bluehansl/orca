@@ -74,5 +74,8 @@ try {
   assert.equal(update.executed, false)
   console.log(`[packaged-cli-smoke] help and skills commands passed via ${cliPath}`)
 } finally {
-  await rm(tempRoot, { recursive: true, force: true })
+  // Why: Windows AV/indexers keep a handle on the freshly copied Orca.exe, so the cleanup of a
+  // temp copy can hit EBUSY after every assertion already passed and fail the whole package job.
+  // Same retry treatment as removeHostTree(); a lock that never clears still throws.
+  await rm(tempRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
 }

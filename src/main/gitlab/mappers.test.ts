@@ -249,6 +249,15 @@ describe('derivePipelineStatus', () => {
     expect(derivePipelineStatus([{ status: 'manual' }, { status: 'success' }])).toBe('success')
   })
 
+  it('leaves a manual-only pipeline unresolved rather than green', () => {
+    expect(derivePipelineStatus([{ status: 'manual' }])).toBe('neutral')
+    expect(derivePipelineStatus([{ status: 'manual' }, { status: 'manual' }])).toBe('neutral')
+  })
+
+  it('counts skipped jobs as passing', () => {
+    expect(derivePipelineStatus([{ status: 'skipped' }, { status: 'skipped' }])).toBe('success')
+  })
+
   it('handles a single object with status', () => {
     expect(derivePipelineStatus({ status: 'success' })).toBe('success')
   })
@@ -256,8 +265,13 @@ describe('derivePipelineStatus', () => {
   it('keeps malformed and unknown array jobs neutral', () => {
     expect(derivePipelineStatus([{ status: 'future_status' }])).toBe('neutral')
     expect(derivePipelineStatus([{}])).toBe('neutral')
+  })
+
+  // Why: matches the shared rollup rule — one unresolved job must not demote a pipeline that has
+  // a passing job, or the same MR reads green in the Checks tab and grey on the card.
+  it('lets a passing job outweigh an unknown one', () => {
     expect(derivePipelineStatus([{ status: 'success' }, { status: 'future_status' }])).toBe(
-      'neutral'
+      'success'
     )
   })
 })
