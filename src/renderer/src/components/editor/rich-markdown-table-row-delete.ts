@@ -44,9 +44,53 @@ function findTableContext($from: ResolvedPos): {
 }
 
 /**
- * Notion-like: Backspace on a fully empty table row removes the row
- * (or the whole table when it is the last remaining row).
+ * Notion / Outline / BlockNote hybrid Backspace inside tables:
+ * 1. Fully empty row → delete row (or table if last row)
+ * 2. Empty cell at start with non-empty siblings → previous cell
+ * 3. Otherwise leave to default content delete
+ *
+ * References:
+ * - Outline shared/editor/nodes/Table.ts (Backspace cell/row/table selection chain)
+ * - BlockNote TableExtension (Backspace at cell start is structural, not list-join)
  */
+export function handleRichMarkdownTableBackspace(editor: Editor): boolean {
+  const { selection } = editor.state
+  if (!selection.empty) {
+    return false
+  }
+
+  const { $from } = selection
+  if (!$from.parent.isTextblock || $from.parentOffset !== 0) {
+    return false
+  }
+
+  const context = findTableContext($from)
+  if (!context) {
+    return false
+  }
+
+  const cell = $from.node(context.cellDepth)
+  if (!isEmptyTableCell(cell)) {
+    return false
+  }
+
+  const row = $from.node(context.rowDepth)
+  if (isEmptyTableRow(row)) {
+    return deleteEmptyTableRow(editor, context.tableDepth)
+  }
+
+  // Empty cell in a non-empty row: step back a cell (Notion-like) instead of
+  // joining across the cell boundary into previous-cell text.
+  if (editor.commands.goToPreviousCell()) {
+    return true
+  }
+
+  // First cell of the table and empty: consume so ProseMirror doesn't try to
+  // delete/merge the table node (BlockNote same guard).
+  return true
+}
+
+/** Empty-row-only path used by focused unit tests. */
 export function deleteEmptyTableRowOnBackspace(editor: Editor): boolean {
   const { selection } = editor.state
   if (!selection.empty) {
@@ -73,7 +117,11 @@ export function deleteEmptyTableRowOnBackspace(editor: Editor): boolean {
     return false
   }
 
-  const table = $from.node(context.tableDepth)
+  return deleteEmptyTableRow(editor, context.tableDepth)
+}
+
+function deleteEmptyTableRow(editor: Editor, tableDepth: number): boolean {
+  const table = editor.state.selection.$from.node(tableDepth)
   // Why: prosemirror-tables deleteRow refuses when the selection spans the
   // only remaining row; deleteTable is the correct last-row exit.
   if (table.childCount <= 1) {

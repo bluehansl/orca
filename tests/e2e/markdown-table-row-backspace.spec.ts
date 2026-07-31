@@ -183,6 +183,15 @@ test.describe('Markdown table Obsidian-like keyboard', () => {
         })
         .toBe('a')
 
+      // Enter moves down a column (BlockNote-style), landing in empty row.
+      await orcaPage.keyboard.press('Enter')
+      await expect
+        .poll(async () => selectionCellText(orcaPage), {
+          timeout: 5_000,
+          message: 'Enter should move down into the empty body row'
+        })
+        .toBe('')
+
       // ── Empty-row Backspace deletes the whole row ──────────────────
       await placeCaretInEmptyBodyRow(orcaPage)
 

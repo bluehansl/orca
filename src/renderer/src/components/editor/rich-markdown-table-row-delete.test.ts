@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { createRichMarkdownExtensions } from './rich-markdown-extensions'
 import { createRichMarkdownEditorCodec } from './rich-markdown-source-transport'
-import { deleteEmptyTableRowOnBackspace } from './rich-markdown-table-row-delete'
+import {
+  deleteEmptyTableRowOnBackspace,
+  handleRichMarkdownTableBackspace
+} from './rich-markdown-table-row-delete'
 
 const multiRowTableMarkdown = `| Name | Value |
 | --- | --- |
@@ -311,6 +314,47 @@ describe('deleteEmptyTableRowOnBackspace', () => {
       expect(deleteEmptyTableRowOnBackspace(editor)).toBe(false)
       expect(countTableRows(editor)).toBe(4)
       expect(editor.getMarkdown()).toContain('b')
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('moves Backspace from an empty cell to the previous cell without deleting the row', () => {
+    const editor = createEditor(multiRowTableMarkdown)
+
+    try {
+      // Clear only the Value cell of the "drop" row ("b")
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== 'tableRow' || !node.textContent.includes('drop')) {
+          return true
+        }
+        const cell = node.child(1)
+        let offset = pos + 1 + node.child(0).nodeSize
+        const tr = editor.state.tr
+          .delete(offset + 1, offset + cell.nodeSize - 1)
+          .insert(offset + 1, editor.schema.nodes.paragraph.create())
+        editor.view.dispatch(tr)
+        return false
+      })
+
+      // Caret in the emptied "b" cell
+      let emptyValuePos: number | null = null
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== 'tableRow' || !node.textContent.includes('drop')) {
+          return true
+        }
+        emptyValuePos = pos + 1 + node.child(0).nodeSize + 1 + 1
+        return false
+      })
+      if (emptyValuePos === null) {
+        throw new Error('Expected emptied value cell')
+      }
+      editor.commands.setTextSelection(emptyValuePos)
+
+      expect(handleRichMarkdownTableBackspace(editor)).toBe(true)
+      expect(countTableRows(editor)).toBe(4)
+      expect(editor.state.selection.$from.parent.textContent).toBe('drop')
+      expect(editor.getMarkdown()).toContain('drop')
     } finally {
       editor.destroy()
     }

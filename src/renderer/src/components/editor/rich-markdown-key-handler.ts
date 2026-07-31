@@ -18,7 +18,8 @@ import {
   exitTrailingEmptyOrderedListItem
 } from './rich-markdown-list-continuation'
 import { deleteAdjacentEmptyParagraph } from './rich-markdown-empty-paragraph-delete'
-import { deleteEmptyTableRowOnBackspace } from './rich-markdown-table-row-delete'
+import { handleRichMarkdownTableBackspace } from './rich-markdown-table-row-delete'
+import { handleRichMarkdownTableEnter } from './rich-markdown-table-enter'
 import { handleRichMarkdownTableTab } from './rich-markdown-table-tab'
 import { handleRichMarkdownCitationKey } from './rich-markdown-citation-keyboard'
 import type { RichMarkdownHtmlSuperscriptLinkContext } from './rich-markdown-html-superscript-link-context'
@@ -132,7 +133,7 @@ export function createRichMarkdownKeyHandler(
         (convertEmptyNestedOrderedItemToContinuation(ed) ||
           collapseEmptyListContinuationParagraph(ed) ||
           deleteAdjacentEmptyParagraph(ed, 'backward') ||
-          deleteEmptyTableRowOnBackspace(ed))
+          handleRichMarkdownTableBackspace(ed))
       ) {
         event.preventDefault()
         return true
@@ -164,6 +165,12 @@ export function createRichMarkdownKeyHandler(
         return true
       }
       if (ed && !isComposingMarkdownInput(event, ed) && exitTrailingEmptyOrderedListItem(ed)) {
+        event.preventDefault()
+        return true
+      }
+      // Why: BlockNote/Outline-style table Enter (cell below / add row) must run
+      // before ProseMirror inserts an in-cell paragraph that GFM can't keep.
+      if (ed && !isComposingMarkdownInput(event, ed) && handleRichMarkdownTableEnter(ed)) {
         event.preventDefault()
         return true
       }
