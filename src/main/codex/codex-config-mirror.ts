@@ -87,6 +87,43 @@ export function syncSystemConfigIntoManagedCodexHome(
   )
 }
 
+/**
+ * Refreshes the retired shared home for PTYs that survived real-home rollout.
+ *
+ * This is deliberately one-way: a retained PTY may hold pre-rollout settings,
+ * so treating that home as a promotion source could overwrite the live config.
+ */
+export function syncSystemConfigIntoLegacySharedCodexHome(
+  homes: CodexSettingsPromotionHomes = {
+    runtimeHomePath: getOrcaManagedCodexHomePath(),
+    systemHomePath: getSystemCodexHomePath()
+  }
+): void {
+  const systemConfigPath = join(homes.systemHomePath, 'config.toml')
+  const runtimeConfigPath = join(homes.runtimeHomePath, 'config.toml')
+  const rawSystemConfig = existsSync(systemConfigPath)
+    ? readAgentStateFileSync(systemConfigPath)
+    : ''
+  // Why: a missing cloud-synced source is not proof the user cleared config.
+  if (rawSystemConfig.trim() === '') {
+    return
+  }
+
+  const sourceConfigDir = resolveCodexConfigMirrorSourceDirectory(homes.systemHomePath)
+  const nextRuntimeConfig = existsSync(runtimeConfigPath)
+    ? mergeSystemCodexConfigIntoRuntime(
+        readAgentStateFileSync(runtimeConfigPath),
+        prepareSystemConfigForRuntimeMirror(rawSystemConfig, sourceConfigDir)
+      )
+    : prepareSystemConfigForFreshRuntimeMirror(rawSystemConfig, sourceConfigDir)
+  if (
+    !existsSync(runtimeConfigPath) ||
+    readAgentStateFileSync(runtimeConfigPath) !== nextRuntimeConfig
+  ) {
+    writeFileAtomically(runtimeConfigPath, nextRuntimeConfig)
+  }
+}
+
 type CodexConfigMirrorResult =
   | { status: 'skipped-missing-source' }
   | { status: 'mirrored'; preservedConflictKeys: ReadonlySet<string> }

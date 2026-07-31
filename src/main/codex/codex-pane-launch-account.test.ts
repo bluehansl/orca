@@ -35,10 +35,22 @@ describe('resolveCodexPaneLaunchAccount', () => {
         pinnedByResume: false,
         launchCodexHomePath: '/data/codex-accounts/account-b/home',
         systemCodexHomePath: SYSTEM_HOME,
-        settings: settings({ host: 'account-b' }),
+        settings: settings({
+          host: 'account-b',
+          accounts: [
+            managedAccount({
+              id: 'account-b',
+              managedHomePath: '/data/codex-accounts/account-b/home'
+            })
+          ]
+        }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: 'account-b' })
+    ).toEqual({
+      selectionKey: 'host',
+      accountId: 'account-b',
+      homeRoute: 'account-home'
+    })
   })
 
   it('records the origin account a resume pinned the pane to, not the selection', () => {
@@ -55,7 +67,24 @@ describe('resolveCodexPaneLaunchAccount', () => {
         settings: settings({ host: 'account-b', accounts }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: 'account-a' })
+    ).toEqual({
+      selectionKey: 'host',
+      accountId: 'account-a',
+      homeRoute: 'account-home'
+    })
+  })
+
+  it('omits route provenance for a pane-local custom home', () => {
+    expect(
+      resolveCodexPaneLaunchAccount({
+        pinnedByResume: false,
+        launchCodexHomePath: '/data/codex-runtime-home/home',
+        recordHomeRoute: false,
+        systemCodexHomePath: SYSTEM_HOME,
+        settings: settings({ host: null }),
+        target: { runtime: 'host' }
+      })
+    ).toEqual({ selectionKey: 'host', accountId: null })
   })
 
   it('records the same account a resume pinned to when it is already selected', () => {
@@ -71,7 +100,11 @@ describe('resolveCodexPaneLaunchAccount', () => {
         settings: settings({ host: 'account-a', accounts }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: 'account-a' })
+    ).toEqual({
+      selectionKey: 'host',
+      accountId: 'account-a',
+      homeRoute: 'account-home'
+    })
   })
 
   it('maps a resume redirected to the real system home to the system-default account', () => {
@@ -86,7 +119,7 @@ describe('resolveCodexPaneLaunchAccount', () => {
         }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: null })
+    ).toEqual({ selectionKey: 'host', accountId: null, homeRoute: 'real-home' })
   })
 
   it('maps a resume that injects no CODEX_HOME to the system-default account', () => {
@@ -98,7 +131,7 @@ describe('resolveCodexPaneLaunchAccount', () => {
         settings: settings({ host: 'account-a', accounts: [managedAccount({ id: 'account-a' })] }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: null })
+    ).toEqual({ selectionKey: 'host', accountId: null, homeRoute: 'real-home' })
   })
 
   it('refuses to attribute a resume home no account owns', () => {
@@ -150,7 +183,11 @@ describe('resolveCodexPaneLaunchAccount', () => {
         settings: settings({ wsl: { Ubuntu: 'other-wsl-account' }, accounts }),
         target: { runtime: 'wsl', wslDistro: 'Ubuntu' }
       })
-    ).toEqual({ selectionKey: 'wsl:Ubuntu', accountId: 'wsl-account' })
+    ).toEqual({
+      selectionKey: 'wsl:Ubuntu',
+      accountId: 'wsl-account',
+      homeRoute: 'wsl-home'
+    })
   })
 
   it('tolerates settings that carry no managed account roster', () => {

@@ -43,11 +43,32 @@ afterEach(() => {
 
 describe('codex pane account registry', () => {
   it('survives a process restart so a daemon-backed shell stays attributable', () => {
-    recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: 'account-a' })
+    recordCodexPaneAccount('pty-1', {
+      selectionKey: 'host',
+      accountId: 'account-a',
+      homeRoute: 'account-home'
+    })
 
     _internals.resetCache()
 
-    expect(getCodexPaneAccount('pty-1')).toEqual({ selectionKey: 'host', accountId: 'account-a' })
+    expect(getCodexPaneAccount('pty-1')).toEqual({
+      selectionKey: 'host',
+      accountId: 'account-a',
+      homeRoute: 'account-home'
+    })
+  })
+
+  it('keeps pre-route records readable without inventing provenance', () => {
+    writeFileSync(
+      join(userDataPath, 'codex-pane-accounts.json'),
+      JSON.stringify({
+        version: 1,
+        panes: { 'pty-1': { selectionKey: 'host', accountId: null } }
+      })
+    )
+    _internals.resetCache()
+
+    expect(getCodexPaneAccount('pty-1')).toEqual({ selectionKey: 'host', accountId: null })
   })
 
   it('forgets a PTY so a reused id cannot inherit a dead pane account', () => {
@@ -141,6 +162,34 @@ describe('listStaleCodexPanes', () => {
 
     expect(
       listStaleCodexPanes({ ptyIds: ['pty-1'], settings: settingsWithSelection('account-a') })
+    ).toEqual([])
+  })
+
+  it('reports a system-default pane after its home route changes', () => {
+    recordCodexPaneAccount('pty-1', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'shared-home'
+    })
+
+    expect(
+      listStaleCodexPanes({
+        ptyIds: ['pty-1'],
+        settings: settingsWithSelection(null),
+        activeHostHomeRoute: 'real-home'
+      })
+    ).toEqual([{ ptyId: 'pty-1', launchAccountId: null, activeAccountId: null }])
+  })
+
+  it('does not guess a route for panes recorded before route provenance', () => {
+    recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: null })
+
+    expect(
+      listStaleCodexPanes({
+        ptyIds: ['pty-1'],
+        settings: settingsWithSelection(null),
+        activeHostHomeRoute: 'real-home'
+      })
     ).toEqual([])
   })
 

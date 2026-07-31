@@ -12,15 +12,19 @@ import { getOrcaUserDataPath } from './codex-home-paths'
  * the old account and the user is stuck there with no prompt to escape it.
  */
 
+export type CodexPaneHomeRoute = 'real-home' | 'shared-home' | 'account-home' | 'wsl-home'
+
 export type CodexPaneAccountRecord = {
   /** 'host' or 'wsl:<distro>' — the selection lane this pane launched from. */
   selectionKey: string
   /** Managed account id, or null for the system-default account. */
   accountId: string | null
+  /** Absent only on records written before route provenance was introduced. */
+  homeRoute?: CodexPaneHomeRoute
 }
 
 type RegistryFile = {
-  version: 1
+  version: 2
   panes: Record<string, CodexPaneAccountRecord>
 }
 
@@ -51,7 +55,7 @@ function readRegistryFile(): unknown {
 }
 
 function parseRegistry(parsed: unknown): RegistryFile {
-  const empty: RegistryFile = { version: 1, panes: {} }
+  const empty: RegistryFile = { version: 2, panes: {} }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return empty
   }
@@ -61,7 +65,11 @@ function parseRegistry(parsed: unknown): RegistryFile {
   }
   for (const [ptyId, record] of Object.entries(panes)) {
     if (isPaneAccountRecord(record)) {
-      empty.panes[ptyId] = { selectionKey: record.selectionKey, accountId: record.accountId }
+      empty.panes[ptyId] = {
+        selectionKey: record.selectionKey,
+        accountId: record.accountId,
+        ...(isPaneHomeRoute(record.homeRoute) ? { homeRoute: record.homeRoute } : {})
+      }
     }
   }
   return empty
@@ -75,6 +83,15 @@ function isPaneAccountRecord(value: unknown): value is CodexPaneAccountRecord {
   return (
     typeof record.selectionKey === 'string' &&
     (record.accountId === null || typeof record.accountId === 'string')
+  )
+}
+
+function isPaneHomeRoute(value: unknown): value is CodexPaneHomeRoute {
+  return (
+    value === 'real-home' ||
+    value === 'shared-home' ||
+    value === 'account-home' ||
+    value === 'wsl-home'
   )
 }
 
@@ -112,7 +129,11 @@ export function recordCodexPaneAccount(ptyId: string, record: CodexPaneAccountRe
     return
   }
   const existing = registry.panes[ptyId]
-  if (existing?.selectionKey === record.selectionKey && existing.accountId === record.accountId) {
+  if (
+    existing?.selectionKey === record.selectionKey &&
+    existing.accountId === record.accountId &&
+    existing.homeRoute === record.homeRoute
+  ) {
     return
   }
   registry.panes[ptyId] = record

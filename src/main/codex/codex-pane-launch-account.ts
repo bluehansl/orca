@@ -6,7 +6,7 @@ import {
   getSelectedCodexAccountIdForTarget,
   type CodexAccountSelectionTarget
 } from '../codex-accounts/runtime-selection'
-import type { CodexPaneAccountRecord } from './codex-pane-account-registry'
+import type { CodexPaneAccountRecord, CodexPaneHomeRoute } from './codex-pane-account-registry'
 
 type CodexPaneLaunchAccountSettings = Pick<
   GlobalSettings,
@@ -28,19 +28,49 @@ type CodexPaneLaunchAccountSettings = Pick<
 export function resolveCodexPaneLaunchAccount(args: {
   pinnedByResume: boolean
   launchCodexHomePath: string | null
+  recordHomeRoute?: boolean
   systemCodexHomePath: string
   settings: CodexPaneLaunchAccountSettings
   target: CodexAccountSelectionTarget
 }): CodexPaneAccountRecord | null {
   const selectionKey = getCodexSelectionLaneKey(args.target)
+  const homeRoute = args.recordHomeRoute === false ? undefined : resolveCodexPaneHomeRoute(args)
   if (!args.pinnedByResume) {
     return {
       selectionKey,
-      accountId: getSelectedCodexAccountIdForTarget(args.settings, args.target)
+      accountId: getSelectedCodexAccountIdForTarget(args.settings, args.target),
+      ...(homeRoute ? { homeRoute } : {})
     }
   }
   const accountId = resolveCodexHomeOwnerAccountId(args)
-  return accountId === undefined ? null : { selectionKey, accountId }
+  return accountId === undefined
+    ? null
+    : { selectionKey, accountId, ...(homeRoute ? { homeRoute } : {}) }
+}
+
+function resolveCodexPaneHomeRoute(args: {
+  launchCodexHomePath: string | null
+  systemCodexHomePath: string
+  settings: CodexPaneLaunchAccountSettings
+  target: CodexAccountSelectionTarget
+}): CodexPaneHomeRoute {
+  if (args.target.runtime === 'wsl') {
+    return 'wsl-home'
+  }
+  if (
+    !args.launchCodexHomePath ||
+    normalizeRuntimePathForComparison(args.launchCodexHomePath) ===
+      normalizeRuntimePathForComparison(args.systemCodexHomePath)
+  ) {
+    return 'real-home'
+  }
+  const launchHome = normalizeRuntimePathForComparison(args.launchCodexHomePath)
+  const accountOwnsHome = args.settings.codexManagedAccounts?.some(
+    (account) =>
+      getCodexSelectionTargetForAccount(account).runtime === 'host' &&
+      normalizeRuntimePathForComparison(account.managedHomePath) === launchHome
+  )
+  return accountOwnsHome ? 'account-home' : 'shared-home'
 }
 
 /** undefined when no account owns the home; null means the system-default account. */
