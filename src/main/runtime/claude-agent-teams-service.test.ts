@@ -309,6 +309,39 @@ describe('ClaudeAgentTeamsService', () => {
     expect(api.splitTerminal).toHaveBeenCalledTimes(1)
   })
 
+  it('remints for both callers when concurrent operations race on the same stale handle', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => 'leader-handle-2'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    let teammateCount = 0
+    vi.mocked(api.splitTerminal).mockImplementation(async (handle) => {
+      if (handle === 'leader-handle') {
+        throw new Error('terminal_handle_stale')
+      }
+      teammateCount += 1
+      return { handle: `teammate-${teammateCount}`, tabId: 'tab-1', paneRuntimeId: -1 }
+    })
+
+    // Both calls attempt the same stale handle; the race loser must still retry
+    // instead of matching the winner's freshly persisted handle and giving up.
+    const [first, second] = await Promise.all([
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}']),
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ])
+    expect(first).toMatchObject({ exitCode: 0 })
+    expect(second).toMatchObject({ exitCode: 0 })
+    expect(
+      vi
+        .mocked(api.splitTerminal)
+        .mock.calls.map(([handle]) => handle)
+        .sort()
+    ).toEqual(['leader-handle', 'leader-handle', 'leader-handle-2', 'leader-handle-2'])
+  })
+
   it('remints a stale leader handle for send-keys as well', async () => {
     const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
       leaderPaneKey: 'tab-1:leaf-leader',

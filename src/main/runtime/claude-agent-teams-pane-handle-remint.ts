@@ -14,14 +14,18 @@ export async function withFreshPaneHandle<T>(
   api: AgentTeamsTerminalApi,
   operation: (handle: string) => Promise<T>
 ): Promise<T> {
+  // Why: capture the attempted handle — a concurrent caller may remint pane.handle
+  // between our failure and the retry check, and comparing against the shared
+  // mutable field would wrongly skip the retry for the loser of that race.
+  const attempted = pane.handle
   try {
-    return await operation(pane.handle)
+    return await operation(attempted)
   } catch (error) {
     if (!isStaleTerminalHandleError(error) || !pane.paneKey) {
       throw error
     }
     const fresh = api.resolveTerminalHandleForPaneKey?.(pane.paneKey)
-    if (!fresh || fresh === pane.handle) {
+    if (!fresh || fresh === attempted) {
       throw error
     }
     pane.handle = fresh

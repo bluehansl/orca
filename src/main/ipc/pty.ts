@@ -4882,6 +4882,7 @@ export function registerPtyHandlers(
         // Why: Agent Teams ids/tokens are process-local, so the team env must be regenerated for the new leader PTY.
         const prepared = await runtime.prepareClaudeAgentTeamsLeaderForHandle({
           handle: preAllocatedHandle,
+          paneKey: stablePaneKey ?? undefined,
           baseEnv: baseEnv ?? {}
         })
         baseEnv = {
