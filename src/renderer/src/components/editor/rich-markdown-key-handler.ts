@@ -19,6 +19,7 @@ import {
 } from './rich-markdown-list-continuation'
 import { deleteAdjacentEmptyParagraph } from './rich-markdown-empty-paragraph-delete'
 import { deleteEmptyTableRowOnBackspace } from './rich-markdown-table-row-delete'
+import { handleRichMarkdownTableTab } from './rich-markdown-table-tab'
 import { handleRichMarkdownCitationKey } from './rich-markdown-citation-keyboard'
 import type { RichMarkdownHtmlSuperscriptLinkContext } from './rich-markdown-html-superscript-link-context'
 import { handleRichMarkdownLinkShortcut } from './rich-markdown-link-shortcut'
@@ -168,10 +169,10 @@ export function createRichMarkdownKeyHandler(
       }
     }
 
-    // Tab/Shift-Tab: indent/outdent lists, insert spaces in code blocks,
-    // and prevent focus from escaping the editor. When the slash menu or
-    // doc-link menu is open, Tab selects a row instead (handled in the
-    // menu blocks below).
+    // Tab/Shift-Tab: table cell nav first (Obsidian-like), then list indent /
+    // outdent, code-block spaces, and prevent focus escaping the editor.
+    // When the slash menu or doc-link menu is open, Tab selects a row instead
+    // (handled in the menu blocks below).
     if (event.key === 'Tab' && !ctx.slashMenuRef.current && !ctx.docLinkMenuRef.current) {
       event.preventDefault()
       const ed = ctx.editorRef.current
@@ -179,6 +180,12 @@ export function createRichMarkdownKeyHandler(
         return true
       }
       flushPendingProseMirrorSelection(ed)
+
+      // Why: Orca's Tab handler runs before TipTap Table shortcuts and used to
+      // always sink/lift lists, so table cell Tab/Shift-Tab never fired.
+      if (!isComposingMarkdownInput(event, ed) && handleRichMarkdownTableTab(ed, event.shiftKey)) {
+        return true
+      }
 
       if (event.shiftKey) {
         if (!ed.commands.liftListItem('listItem')) {
