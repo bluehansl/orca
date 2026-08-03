@@ -294,10 +294,45 @@ describe('ClaudeAgentTeamsService', () => {
     })
   })
 
-  it('does not retry when the pane key resolves to the same stale handle', async () => {
+  it('retries once with the same handle when resolving healed epoch-only staleness', async () => {
     const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
       leaderPaneKey: 'tab-1:leaf-leader',
       resolveTerminalHandleForPaneKey: () => 'leader-handle'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    // resolving by pane key re-registers the same handle against the current
+    // epoch, so the retry with the identical string succeeds.
+    vi.mocked(api.splitTerminal).mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    await expect(
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ).resolves.toMatchObject({ stdout: '%2\n', exitCode: 0 })
+    expect(vi.mocked(api.splitTerminal).mock.calls.map(([handle]) => handle)).toEqual([
+      'leader-handle',
+      'leader-handle'
+    ])
+  })
+
+  it('propagates the stale error when the retry fails too', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => 'leader-handle'
+    })
+    const request = (argv: string[]) =>
+      service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)
+
+    vi.mocked(api.splitTerminal).mockRejectedValue(new Error('terminal_handle_stale'))
+    await expect(
+      request(['split-window', '-t', leaderPane, '-h', '-P', '-F', '#{pane_id}'])
+    ).resolves.toMatchObject({ ok: false, exitCode: 1 })
+    expect(api.splitTerminal).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry when the resolver returns no handle', async () => {
+    const { service, teamId, token, leaderPane, api } = createServiceWithLeader({
+      leaderPaneKey: 'tab-1:leaf-leader',
+      resolveTerminalHandleForPaneKey: () => null
     })
     const request = (argv: string[]) =>
       service.handleTmuxCompat({ teamId, token, envPane: leaderPane, argv }, api)

@@ -25,9 +25,12 @@ export async function withFreshPaneHandle<T>(
       throw error
     }
     const fresh = api.resolveTerminalHandleForPaneKey?.(pane.paneKey)
-    if (!fresh || fresh === attempted) {
+    if (!fresh) {
       throw error
     }
+    // Why: retry even when the resolver returns the attempted handle — resolving by
+    // pane key re-registers that handle against the current renderer epoch as a side
+    // effect, so epoch-only staleness is already healed for the retry.
     pane.handle = fresh
     if (pane.fakePaneId === team.leaderPane) {
       team.leaderHandle = fresh
