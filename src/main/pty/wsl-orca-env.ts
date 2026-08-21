@@ -4,6 +4,11 @@ import {
   ORCHESTRATION_COMPATIBILITY_HOST_INCARNATION_ENV,
   ORCHESTRATION_COMPATIBILITY_HOST_KIND_ENV
 } from '../../shared/orchestration-compatibility-evidence'
+import {
+  SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV,
+  SETUP_AGENT_SEQUENCE_STARTUP_SCRIPT_ENV
+} from '../../shared/setup-agent-sequencing'
+import { getShellReadyWrapperRoot } from '../providers/local-pty-shell-ready-wrapper-root'
 
 const WSLENV_ENTRY_SEPARATOR = ':'
 
@@ -57,6 +62,11 @@ export function addWorktreeSetupWslInteropEnv(env: Record<string, string | undef
 }
 
 export function addOrcaWslInteropEnv(env: Record<string, string>): void {
+  // Why set here: every WSL spawn path funnels through this helper, and the
+  // in-guest login script needs the resolved wrapper root. Windows/WSL wrappers
+  // are always the local file set -- windows-shell-args.ts is shared by the
+  // in-process provider and the daemon spawner, so both resolve the same tree.
+  env.ORCA_SHELL_READY_ROOT = getShellReadyWrapperRoot()
   // Why: the endpoint is a Windows path (/p-translated so the guest reads it
   // via /mnt/c) until the WSL hook relay reports the guest home — then it is
   // already a guest-side POSIX path and must cross untranslated.
@@ -72,11 +82,16 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
   const passthroughEntries = [
     'ORCA_TERMINAL_HANDLE/u',
     'ORCA_USER_DATA_PATH/p',
+    // Why /p: the guest reads the content-addressed wrapper tree through /mnt/c,
+    // and it cannot derive the hash segment from ORCA_USER_DATA_PATH alone.
+    'ORCA_SHELL_READY_ROOT/p',
     'ORCA_CLI_COMMAND/u',
     'ORCA_PANE_KEY/u',
     'ORCA_TAB_ID/u',
     'ORCA_WORKTREE_ID/u',
     'ORCA_AGENT_LAUNCH_TOKEN/u',
+    `${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}/u`,
+    `${SETUP_AGENT_SEQUENCE_STARTUP_SCRIPT_ENV}/u`,
     'ORCA_ORCHESTRATION_COMPATIBILITY_HOST_KIND/u',
     'ORCA_ORCHESTRATION_COMPATIBILITY_HOST_ID/u',
     'ORCA_ORCHESTRATION_COMPATIBILITY_HOST_INCARNATION/u',

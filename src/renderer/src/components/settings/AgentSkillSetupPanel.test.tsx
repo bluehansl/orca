@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   terminalProps: [] as {
     command: string
     description: string
+    shellOverride?: string
+    prepareCommandForShell?: (command: string, shellOverride?: string) => string
     onTerminalExit?: () => void
     onCommandFinished?: (bestEffortExitCode: number | null) => void
   }[],
@@ -22,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   skillsChanged: vi.fn(),
   skillsRefreshed: vi.fn(),
+  freshnessRefresh: vi.fn(),
   terminalInstanceCount: 0
 }))
 
@@ -37,10 +40,16 @@ vi.mock('@/hooks/useInstalledAgentSkills', () => ({
   notifyInstalledAgentSkillsRefreshed: mocks.skillsRefreshed
 }))
 
+vi.mock('@/hooks/useSkillFreshness', () => ({
+  refreshSkillFreshness: mocks.freshnessRefresh
+}))
+
 vi.mock('../onboarding/OnboardingInlineCommandTerminal', () => ({
   OnboardingInlineCommandTerminal: (props: {
     command: string
     description: string
+    shellOverride?: string
+    prepareCommandForShell?: (command: string, shellOverride?: string) => string
     onTerminalExit?: () => void
     onCommandFinished?: (bestEffortExitCode: number | null) => void
   }) => {
@@ -155,6 +164,8 @@ describe('AgentSkillSetupPanel', () => {
     mocks.toastSuccess.mockReset()
     mocks.skillsChanged.mockReset()
     mocks.skillsRefreshed.mockReset()
+    mocks.freshnessRefresh.mockReset()
+    mocks.freshnessRefresh.mockResolvedValue(undefined)
     mocks.terminalInstanceCount = 0
     Object.defineProperty(window, 'api', {
       configurable: true,
@@ -164,6 +175,9 @@ describe('AgentSkillSetupPanel', () => {
         },
         ui: {
           writeClipboardText: mocks.clipboardWrite
+        },
+        platform: {
+          get: () => ({ platform: 'win32' })
         }
       }
     })
@@ -288,6 +302,50 @@ describe('AgentSkillSetupPanel', () => {
     expect(mocks.skillsChanged).not.toHaveBeenCalled()
   })
 
+  it('rechecks presence without invalidating local freshness when no local verdict exists', async () => {
+    const onRecheck = vi.fn(async () => {})
+    await renderInteractivePanel({ onRecheck })
+    await clickButton('Install')
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onCommandFinished?.(0)
+      mocks.terminalProps.at(-1)?.onTerminalExit?.()
+    })
+    await act(async () => {})
+
+    expect(onRecheck).toHaveBeenCalledOnce()
+    expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
+    expect(mocks.skillsChanged).not.toHaveBeenCalled()
+    expect(mocks.freshnessRefresh).not.toHaveBeenCalled()
+  })
+
+  it('refreshes first-install freshness only after the terminal re-check finishes', async () => {
+    let finishRecheck: (() => void) | null = null
+    const recheck = new Promise<void>((resolve) => {
+      finishRecheck = resolve
+    })
+    const onRecheck = vi.fn(() => recheck)
+    await renderInteractivePanel({ freshnessSkillName: 'orca-cli', onRecheck })
+    await clickButton('Install')
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onTerminalExit?.()
+    })
+
+    expect(onRecheck).toHaveBeenCalledOnce()
+    expect(mocks.freshnessRefresh).not.toHaveBeenCalled()
+    expect(mocks.skillsRefreshed).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finishRecheck?.()
+      await recheck
+    })
+
+    expect(mocks.skillsChanged).not.toHaveBeenCalled()
+    expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
+    expect(mocks.freshnessRefresh).toHaveBeenCalledOnce()
+  })
+
   it('opens not-installed setup with the install command for preview, copy, and terminal', async () => {
     await renderInteractivePanel({ installedCommand: UPDATE_COMMAND })
 
@@ -307,6 +365,27 @@ describe('AgentSkillSetupPanel', () => {
 
     expect(mocks.clipboardWrite).toHaveBeenCalledWith(INSTALL_COMMAND)
     expect(mocks.toastSuccess).toHaveBeenCalledWith('Copied command.')
+  })
+
+  it('copies the POSIX WSL command while the setup pane runs the PowerShell wrapper', async () => {
+    await renderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'wsl', wslDistro: 'Ubuntu', label: 'WSL Ubuntu' }
+    })
+
+    await clickButton('Install')
+
+    const terminalProps = mocks.terminalProps.at(-1)
+    expect(terminalProps?.command).toBe(INSTALL_COMMAND)
+    expect(terminalProps?.prepareCommandForShell?.(INSTALL_COMMAND, 'powershell.exe')).toMatch(
+      /^& \{ \$PSNativeCommandArgumentPassing = 'Legacy'; wsl\.exe -d 'Ubuntu'/
+    )
+    await act(async () => {
+      container
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Copy command"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith(INSTALL_COMMAND)
   })
 
   it('shows a visible pending state while CLI setup preflight is running', async () => {
@@ -361,6 +440,76 @@ describe('AgentSkillSetupPanel', () => {
     expect(container?.textContent).toContain(INSTALL_COMMAND)
     expect(container?.textContent).not.toContain(UPDATE_COMMAND)
     expect(mocks.terminalProps.at(-1)).toMatchObject({ command: INSTALL_COMMAND })
+  })
+
+  it('keeps an open terminal on the WSL runtime captured when it opened', async () => {
+    await renderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'wsl', wslDistro: 'Ubuntu', label: 'WSL Ubuntu' }
+    })
+    await clickButton('Install')
+    const openedCommand = mocks.terminalProps.at(-1)?.command
+    const openedPrepareCommand = mocks.terminalProps.at(-1)?.prepareCommandForShell
+
+    await rerenderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'wsl', wslDistro: 'Fedora', label: 'WSL Fedora' }
+    })
+
+    expect(mocks.terminalProps.at(-1)?.command).toBe(openedCommand)
+    expect(openedPrepareCommand?.(INSTALL_COMMAND, 'powershell.exe')).toContain(
+      "wsl.exe -d 'Ubuntu'"
+    )
+
+    await rerenderInteractivePanel({
+      terminalRuntime: { runtime: 'host', label: 'Windows' }
+    })
+
+    expect(mocks.terminalProps.at(-1)).toMatchObject({
+      command: openedCommand,
+      shellOverride: 'powershell.exe'
+    })
+  })
+
+  it('captures the current runtime when retrying a failed command', async () => {
+    await renderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'wsl', wslDistro: 'Ubuntu', label: 'WSL Ubuntu' }
+    })
+    await clickButton('Install')
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onCommandFinished?.(1)
+    })
+
+    await rerenderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'wsl', wslDistro: 'Fedora', label: 'WSL Fedora' }
+    })
+    expect(
+      mocks.terminalProps.at(-1)?.prepareCommandForShell?.(INSTALL_COMMAND, 'powershell.exe')
+    ).toContain("wsl.exe -d 'Ubuntu'")
+
+    await clickButton('Retry')
+
+    expect(
+      mocks.terminalProps.at(-1)?.prepareCommandForShell?.(INSTALL_COMMAND, 'powershell.exe')
+    ).toContain("wsl.exe -d 'Fedora'")
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onCommandFinished?.(1)
+    })
+    await rerenderInteractivePanel({
+      terminalShellOverride: 'powershell.exe',
+      terminalRuntime: { runtime: 'host', label: 'Windows' }
+    })
+
+    await clickButton('Retry')
+
+    const retryCommand = mocks.terminalProps
+      .at(-1)
+      ?.prepareCommandForShell?.(INSTALL_COMMAND, 'powershell.exe')
+    expect(retryCommand).toMatch(/^cmd\.exe \/d \/s \/c /)
+    expect(retryCommand).not.toContain('wsl.exe')
   })
 
   it('falls back to the install command for installed callers without installedCommand', async () => {
@@ -499,9 +648,12 @@ describe('AgentSkillSetupPanel', () => {
     expect(mocks.terminalProps.at(-1)).toMatchObject({ command: UPDATE_COMMAND })
   })
 
-  it('invalidates shared skill state before the direct completion re-check', async () => {
+  it('refreshes shared skill state after the direct completion re-check', async () => {
     const calls: string[] = []
-    mocks.skillsChanged.mockImplementation(() => calls.push('invalidate'))
+    mocks.skillsRefreshed.mockImplementation(() => calls.push('presence'))
+    mocks.freshnessRefresh.mockImplementation(async () => {
+      calls.push('freshness')
+    })
     const onRecheck = vi.fn(() => {
       calls.push('recheck')
     })
@@ -513,7 +665,25 @@ describe('AgentSkillSetupPanel', () => {
       mocks.terminalProps.at(-1)?.onCommandFinished?.(0)
     })
 
-    expect(calls).toEqual(['invalidate', 'recheck'])
+    expect(calls).toEqual(['recheck', 'presence', 'freshness'])
+  })
+
+  it('rechecks once when command completion is followed by terminal exit', async () => {
+    const onRecheck = vi.fn()
+    await renderInteractivePanel({ freshnessSkillName: 'orca-cli', onRecheck })
+    await clickButton('Install')
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onCommandFinished?.(0)
+    })
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onTerminalExit?.()
+    })
+    await act(async () => {})
+
+    expect(onRecheck).toHaveBeenCalledOnce()
+    expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
+    expect(mocks.freshnessRefresh).toHaveBeenCalledOnce()
   })
 
   it('re-enables Install after the setup shell exits so a failed attempt can retry', async () => {

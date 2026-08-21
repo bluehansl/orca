@@ -4,6 +4,7 @@ import {
   tmuxSendKeysText,
   tmuxValue
 } from '../../shared/claude-agent-teams-tmux-compat'
+import { describeUnconfirmedAgentStop } from '../../shared/pty-liveness-verdict'
 import {
   formatContext,
   paneEnv,
@@ -11,9 +12,8 @@ import {
   updateMainVerticalAfterSplit
 } from './claude-agent-teams-pane-layout'
 import { withFreshPaneHandle } from './claude-agent-teams-pane-handle-remint'
+import { resolvePane, resolvePaneOrWindow } from './claude-agent-teams-pane-resolution'
 import type { AgentTeam, AgentTeamsTerminalApi, TeamPane } from './claude-agent-teams-types'
-
-type ResolvedTarget = { type: 'pane'; pane: TeamPane } | { type: 'window' }
 
 export class ClaudeAgentTeamsTmuxDispatcher {
   async dispatch(
@@ -92,8 +92,8 @@ export class ClaudeAgentTeamsTmuxDispatcher {
 
   private displayMessage(team: AgentTeam, args: string[], envPane: string): string {
     const parsed = parseTmuxArgs(args, ['-F', '-t'], ['-p'])
-    const target = this.resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
-    const pane = target.type === 'window' ? this.resolvePane(team, envPane) : target.pane
+    const target = resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = target.type === 'window' ? resolvePane(team, envPane) : target.pane
     const format =
       parsed.positional.length > 0 ? parsed.positional.join(' ') : tmuxValue(parsed, '-F')
     return `${renderTmuxFormat(format, formatContext(team, pane), '')}\n`
@@ -110,7 +110,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
       ['-c', '-F', '-l', '-t'],
       ['-P', '-b', '-d', '-f', '-h', '-v']
     )
-    const targetPane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const targetPane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     const fakePaneId = `%${team.nextPaneNumber}`
     team.nextPaneNumber += 1
     const splitTarget = resolveSplitTarget(team, targetPane, parsed.flags.has('-h'))
@@ -119,7 +119,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
         direction: splitTarget.direction,
         command: parsed.positional.join(' ') || undefined,
         env: paneEnv(team, fakePaneId),
-        envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
+        envToDelete: ['TERM_PROGRAM'],
         activate: false
       })
     )
@@ -152,7 +152,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     api: AgentTeamsTerminalApi
   ): Promise<string> {
     const parsed = parseTmuxArgs(args, ['-c', '-e', '-t'], ['-k'])
-    const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     if (pane.fakePaneId === team.leaderPane) {
       throw new Error('refusing to respawn leader pane')
     }
@@ -160,29 +160,33 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     if (!command) {
       return ''
     }
+    if (pane.respawnBlockedReason) {
+      throw new Error(pane.respawnBlockedReason)
+    }
     const origin =
       (pane.splitFromPane ? team.panes.get(pane.splitFromPane) : undefined) ??
       team.panes.get(team.leaderPane)!
-    // Why: create the replacement before destroying the placeholder so a failed
-    // split leaves the fake pane id pointing at a still-live terminal; on cleanup
-    // failure, discard the new split and keep the placeholder registered.
     const previousHandle = pane.handle
-    const split = await withFreshPaneHandle(team, origin, api, (handle) =>
-      api.splitTerminal(handle, {
-        direction: pane.splitDirection ?? 'horizontal',
-        command,
-        env: paneEnv(team, pane.fakePaneId),
-        envToDelete: ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR'],
-        activate: false
-      })
-    )
+    const close = await api.closeTerminal(previousHandle)
+    if (!close.ptyKilled) {
+      pane.respawnBlockedReason = describeUnconfirmedAgentStop(close)
+      throw new Error(pane.respawnBlockedReason)
+    }
     try {
-      await api.closeTerminal(previousHandle)
+      const split = await withFreshPaneHandle(team, origin, api, (handle) =>
+        api.splitTerminal(handle, {
+          direction: pane.splitDirection ?? 'horizontal',
+          command,
+          env: paneEnv(team, pane.fakePaneId),
+          envToDelete: ['TERM_PROGRAM'],
+          activate: false
+        })
+      )
+      pane.handle = split.handle
     } catch (error) {
-      await api.closeTerminal(split.handle).catch(() => {})
+      this.removePane(team, pane)
       throw error
     }
-    pane.handle = split.handle
     return ''
   }
 
@@ -190,7 +194,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     const parsed = parseTmuxArgs(args, ['-t'], [])
     const layout = parsed.positional[0] ?? ''
     if (layout === 'main-vertical') {
-      const target = this.resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
+      const target = resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
       const targetPane = target.type === 'pane' ? target.pane : null
       team.mainVertical = {
         mainPane: team.leaderPane,
@@ -206,7 +210,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
 
   private listPanes(team: AgentTeam, args: string[], envPane: string): string {
     const parsed = parseTmuxArgs(args, ['-F', '-t'], [])
-    this.resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
+    resolvePaneOrWindow(team, tmuxValue(parsed, '-t') ?? envPane)
     return team.paneOrder
       .map((paneId) => {
         const pane = team.panes.get(paneId)!
@@ -223,7 +227,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     api: AgentTeamsTerminalApi
   ): Promise<string> {
     const parsed = parseTmuxArgs(args, ['-t'], ['-l'])
-    const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     const text = tmuxSendKeysText(parsed.positional, parsed.flags.has('-l'))
     if (text) {
       await withFreshPaneHandle(team, pane, api, (handle) => api.sendTerminal(handle, { text }))
@@ -238,7 +242,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     api: AgentTeamsTerminalApi
   ): Promise<string> {
     const parsed = parseTmuxArgs(args, ['-E', '-S', '-t'], ['-J', '-N', '-p'])
-    const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     const read = await withFreshPaneHandle(team, pane, api, (handle) =>
       api.readTerminal(handle, { limit: 1000 })
     )
@@ -256,7 +260,7 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     if (tmuxValue(parsed, '-P') || tmuxValue(parsed, '-T')) {
       return ''
     }
-    const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     team.previouslyFocusedPane = envPane
     await withFreshPaneHandle(team, pane, api, (handle) => api.focusTerminal(handle))
     return ''
@@ -269,18 +273,25 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     api: AgentTeamsTerminalApi
   ): Promise<string> {
     const parsed = parseTmuxArgs(args, ['-t'], [])
-    const pane = this.resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
+    const pane = resolvePane(team, tmuxValue(parsed, '-t') ?? envPane)
     if (pane.fakePaneId === team.leaderPane) {
       throw new Error('refusing to kill leader pane')
     }
-    await api.closeTerminal(pane.handle)
+    const close = await api.closeTerminal(pane.handle)
+    if (!close.ptyKilled) {
+      throw new Error(describeUnconfirmedAgentStop(close))
+    }
+    this.removePane(team, pane)
+    return ''
+  }
+
+  private removePane(team: AgentTeam, pane: TeamPane): void {
     team.panes.delete(pane.fakePaneId)
     team.paneOrder = team.paneOrder.filter((id) => id !== pane.fakePaneId)
     if (team.mainVertical?.lastColumnPane === pane.fakePaneId) {
       team.mainVertical.lastColumnPane =
         [...team.paneOrder].toReversed().find((id) => id !== team.leaderPane) ?? null
     }
-    return ''
   }
 
   private async lastPane(
@@ -294,20 +305,5 @@ export class ClaudeAgentTeamsTmuxDispatcher {
       await withFreshPaneHandle(team, pane, api, (handle) => api.focusTerminal(handle))
     }
     return ''
-  }
-
-  private resolvePaneOrWindow(team: AgentTeam, target: string): ResolvedTarget {
-    if (target.includes(':') || target === team.sessionName || target.startsWith('@')) {
-      return { type: 'window' }
-    }
-    return { type: 'pane', pane: this.resolvePane(team, target) }
-  }
-
-  private resolvePane(team: AgentTeam, target: string): TeamPane {
-    const pane = team.panes.get(target)
-    if (!pane) {
-      throw new Error(`unknown pane: ${target}`)
-    }
-    return pane
   }
 }

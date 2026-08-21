@@ -7,7 +7,10 @@
  */
 import { isTerminalLeafId } from '../../../../shared/stable-pane-id'
 import { useAppStore } from '@/store'
+import { isRemoteRuntimePtyId } from '@/runtime/runtime-terminal-inspection'
+import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
+import { terminalProviderHasAuthoritativeSnapshot } from '../terminal/terminal-provider-snapshot-capability'
 import {
   isParkRestorableTerminalPty,
   selectPairedRuntimeParkingEnvironmentIds,
@@ -30,6 +33,7 @@ import {
 // Why: re-export so callers keep one import surface; the registry split only breaks the store-slice import cycle.
 export {
   captureParkedTerminalPaneCandidates,
+  collectParkedTerminalWatcherPtyIds,
   disposeAllParkedTerminalWatchers,
   disposeRemovedWorktreeParkedTerminalWatchers,
   disposeParkedTerminalWatchersForPtyIds,
@@ -46,7 +50,10 @@ export {
 export type { ParkableTerminalTabModel } from './terminal-parked-watcher-reconciliation'
 export type ParkedTerminalPtyEligibility = (ptyId: string) => boolean
 
-const allowSnapshotBackedPty = (): boolean => true
+const allowOrdinaryParkRestore = (ptyId: string): boolean =>
+  isRemoteRuntimePtyId(ptyId) ||
+  parseAppSshPtyId(ptyId) !== null ||
+  terminalProviderHasAuthoritativeSnapshot(ptyId)
 
 // Why: fact-mode watchers work for any pty whose bytes transit local main —
 // SSH included — so watcher coverage follows the park-restore policy, not the
@@ -74,8 +81,9 @@ function parkRestorePolicyFromState(state: {
 export function canWatcherCoverParkedTerminalTab(
   worktreeId: string,
   tab: ParkableTerminalTabModel,
-  // Why: cold activation needs stronger snapshot support (view never mounted); ordinary parking can reattach a mounted view.
-  isPtyEligible: ParkedTerminalPtyEligibility = allowSnapshotBackedPty
+  // Why: paired and SSH restore through their own policy; local parking must not
+  // unmount a pane whose preserved daemon can only return a lossy snapshot.
+  isPtyEligible: ParkedTerminalPtyEligibility = allowOrdinaryParkRestore
 ): boolean {
   const state = useAppStore.getState()
   const panes = resolveParkedTerminalPaneCandidates(tab, state)
