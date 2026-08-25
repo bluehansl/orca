@@ -733,6 +733,9 @@ export function createMainWindow(
       case 'openTasks':
         mainWindow.webContents.send('ui:openTasks')
         return
+      case 'toggleAgentDashboard':
+        mainWindow.webContents.send('ui:toggleAgentDashboard')
+        return
       case 'switchRecentTab':
         mainWindow.webContents.send('ui:switchRecentTab')
         return
@@ -808,7 +811,10 @@ export function createMainWindow(
       return true
     }
 
-    if (action.type === 'toggleQuickCommandsMenu' && isAutoRepeat) {
+    if (
+      (action.type === 'toggleQuickCommandsMenu' || action.type === 'deleteCurrentWorkspace') &&
+      isAutoRepeat
+    ) {
       event.preventDefault()
       return true
     }

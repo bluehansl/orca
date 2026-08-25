@@ -19,11 +19,17 @@ import {
   type CodexRateWindowSnapshot
 } from './codex-rate-limit-window-classification'
 import { resolveCodexCommand } from '../codex-cli/command'
+import { CODEX_READ_ONLY_APP_SERVER_ARGS } from '../codex-cli/codex-read-only-app-server-args'
 import { withMacTailscaleDnsHint } from '../network/macos-tailscale-dns-diagnostic'
 import { getCmdExePath, getSpawnArgsForWindows } from '../win32-utils'
 import { cleanupHiddenRateLimitPty, registerHiddenRateLimitPty } from './hidden-pty-cleanup'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { extractCodexAuthError, isCodexAuthError } from '../../shared/codex-auth-errors'
+import {
+  excerptAgentFailureOutput,
+  sanitizeAgentFailureDetail
+} from '../../shared/commit-message-agent-output'
+import { redactString } from '../observability/redactor'
 import { buildWslExecArgs, buildWslLoginShellCommand } from '../../shared/wsl-login-shell-command'
 import {
   getHiddenRateLimitWslCwdSetupCommands,
@@ -611,7 +617,7 @@ async function withBackendSessionWindow(
 }
 
 // ---------------------------------------------------------------------------
-// RPC fetch — spawn `codex -s read-only -a untrusted app-server`
+// RPC fetch — spawn a read-only, non-interactive `codex app-server`
 // ---------------------------------------------------------------------------
 
 async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<ProviderRateLimits> {
@@ -624,7 +630,7 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
     let resolved = false
     let rpcId = 0
 
-    const codexArgs = ['-s', 'read-only', '-a', 'untrusted', 'app-server']
+    const codexArgs = [...CODEX_READ_ONLY_APP_SERVER_ARGS]
     const wslCodex = options?.codexHomePath
       ? buildWslCodexCommand(options.codexHomePath, codexArgs, { isolateRpcStdio: true })
       : null
@@ -862,17 +868,40 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       child.stdin.off('error', onStdinError)
     }
 
-    function onClose(): void {
+    function onClose(code: number | null, signal: NodeJS.Signals | null): void {
       settle({
         provider: 'codex',
         session: null,
         weekly: null,
         updatedAt: Date.now(),
-        error: withMacTailscaleDnsHint('RPC process exited unexpectedly', stderr),
+        error: describeCodexRpcExit(code, signal, stderr),
         status: 'error'
       })
     }
   })
+}
+
+// Why: surfaced text drives re-auth classification, so diagnosis and classification must use the same sanitized value.
+function describeCodexRpcExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stderr: string
+): string {
+  if (extractCodexAuthError(stderr)) {
+    // Fixed copy cannot leak paths/tokens and is exactly what the renderer classifies.
+    return 'Your ChatGPT session could not be refreshed. Please sign in again.'
+  }
+  const reason =
+    code !== null ? `exit code ${code}` : signal ? `signal ${signal}` : 'no exit status'
+  const detail = sanitizeAgentFailureDetail(
+    redactString(excerptAgentFailureOutput('', stderr) ?? '')
+  )
+  return withMacTailscaleDnsHint(
+    detail
+      ? `Codex RPC process exited (${reason}): ${detail}`
+      : `Codex RPC process exited (${reason})`,
+    stderr
+  )
 }
 
 // ---------------------------------------------------------------------------

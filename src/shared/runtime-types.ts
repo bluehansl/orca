@@ -3,6 +3,7 @@ import type {
   AgentStatusEntry,
   AgentStatusOrchestrationContext,
   AgentStatusState,
+  AgentWorkingMode,
   AgentType
 } from './agent-status-types'
 import type {
@@ -64,6 +65,14 @@ export type RuntimeTerminalDriverState =
 
 export type RuntimeBrowserDriverState = RuntimeTerminalDriverState
 
+export const BROWSER_UNAVAILABLE_ERROR_CODE = 'browser_unavailable' as const
+
+export type RuntimeDegradation = {
+  code: typeof BROWSER_UNAVAILABLE_ERROR_CODE
+  capability: 'browser.headless.v1'
+  message: string
+}
+
 export type RuntimeStatus = {
   runtimeId: string
   /** Authenticated requester identity. Missing for in-process callers and older hosts. */
@@ -79,6 +88,11 @@ export type RuntimeStatus = {
   runtimeProtocolVersion?: number
   minCompatibleRuntimeClientVersion?: number
   capabilities?: RuntimeCapability[]
+  /**
+   * Optional for mixed-version peers. Absence means the host predates structured
+   * degradation reporting, not that the host proved every optional feature available.
+   */
+  degradations?: RuntimeDegradation[]
   // Why: optional fields let updated clients inventory both new and legacy paired servers.
   appVersion?: string
   remoteUpdateSupport?: RemoteServerUpdateSupport
@@ -122,6 +136,7 @@ export type CliStatusResult = {
     appVersion?: string
     remoteUpdateSupport?: RemoteServerUpdateSupport
     capabilities?: RuntimeCapability[]
+    degradations?: RuntimeDegradation[]
   }
   graph: {
     state: RuntimeGraphStatus | 'not_running' | 'starting'
@@ -812,6 +827,7 @@ export type RuntimeWorktreeAgentRow = {
   /** paneKey of the orchestration parent, or null for a root agent. */
   parentPaneKey: string | null
   state: AgentStatusState
+  workingMode?: AgentWorkingMode
   agentType: AgentType | null
   /** Raw hook-reported prompt. Display surfaces can prefer displayName. */
   prompt: string
@@ -871,6 +887,8 @@ export type RuntimeWorktreePsSummary = {
   lastOutputAt: number | null
   preview: string
   status: RuntimeWorktreeStatus
+  /** Optional discriminator for a working workspace; older clients fall back to ordinary working. */
+  workingMode?: AgentWorkingMode
   /** Live agents in this worktree, newest-state-first. Empty for shell-only
    *  worktrees. Mirrors desktop's inline agent list (WorktreeCardAgents). */
   agents: RuntimeWorktreeAgentRow[]
@@ -1293,6 +1311,11 @@ export type BrowserTabCreateResult = {
 }
 
 export type BrowserErrorCode =
+  | typeof BROWSER_UNAVAILABLE_ERROR_CODE
+  | 'browser_command_unavailable'
+  | 'browser_profile_unavailable'
+  | 'browser_screencast_unavailable'
+  | 'browser_certificate_trust_unavailable'
   | 'browser_no_tab'
   | 'browser_tab_not_found'
   | 'browser_tab_closed'
