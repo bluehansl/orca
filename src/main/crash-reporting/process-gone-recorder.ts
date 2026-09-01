@@ -15,6 +15,10 @@ import {
   recordDurableCrashBreadcrumb
 } from './durable-crash-breadcrumb'
 import {
+  correlateChildProcessDeath,
+  trackRendererSiblingAttribution
+} from './process-gone-sibling-attribution'
+import {
   shouldRecordProcessGoneCrash,
   type ExpectedTeardownScope,
   type ProcessGoneSource
@@ -26,6 +30,10 @@ import {
   processGoneDedupe,
   type ProcessGoneDedupe
 } from './process-gone-dedupe'
+import {
+  findSiblingChildDeaths,
+  siblingProcessDeathDetails
+} from './process-gone-sibling-correlation'
 import { getMainProcessLifecycleIdentity } from './main-process-lifecycle-identity'
 import {
   captureMinidumpSignature,
@@ -72,10 +80,6 @@ const captureProcessMinidump: MinidumpCapture = (crashedAtMs, expectedProcessTyp
 // one here would weaken the other 30s coalescers. Stay uniform with them.
 const SUPPRESSED_PROCESS_GONE_COALESCE_MS = 30_000
 
-function processGoneBreadcrumbData(event: ProcessGoneCrashEvent) {
-  return buildSuppressedProcessGoneBreadcrumbData(event)
-}
-
 function processGoneRendererOrigin(event: ProcessGoneCrashEvent): string | undefined {
   return event.webContentsId === undefined
     ? undefined
@@ -114,7 +118,7 @@ function persistFailureData(event: ProcessGoneCrashEvent, error: unknown) {
       ? error.code
       : undefined
   return {
-    ...processGoneBreadcrumbData(event),
+    ...buildSuppressedProcessGoneBreadcrumbData(event),
     errorName: error instanceof Error ? error.name : typeof error,
     errorMessage: sanitizeCrashReportString(error instanceof Error ? error.message : String(error)),
     ...(errorCode ? { errorCode } : {})
@@ -169,15 +173,27 @@ export function recordProcessGoneCrash(
   if (!isCrashReportReason(event.reason)) {
     return
   }
+  const goneAt = Date.now()
+  const serviceName =
+    typeof event.details.serviceName === 'string' ? event.details.serviceName : undefined
+  if (event.source === 'child') {
+    correlateChildProcessDeath({
+      at: goneAt,
+      processType: event.processType,
+      ...(serviceName ? { serviceName } : {}),
+      reason: event.reason,
+      exitCode: event.exitCode
+    })
+  }
   // Crashpad captures suppressed service crashes too; keep a crash loop from
   // filling the disk even when no user-facing report is created.
   scheduleCrashpadDumpPrune()
   if (
     !shouldRecordProcessGoneCrash({
+      platform: process.platform,
       source: event.source,
       processType: event.processType,
-      serviceName:
-        typeof event.details.serviceName === 'string' ? event.details.serviceName : undefined,
+      serviceName,
       reason: event.reason,
       exitCode: event.exitCode,
       expectedTeardown: event.expectedTeardown
@@ -186,7 +202,7 @@ export function recordProcessGoneCrash(
     // Why: Chromium can crash-loop a recoverable child (network service seen at
     // 1459/min) and each suppressed event costs a span plus a forced disk flush,
     // which both floods the 30-entry ring and evicts the real pre-crash trail.
-    const suppressedData = processGoneBreadcrumbData(event)
+    const suppressedData = buildSuppressedProcessGoneBreadcrumbData(event)
     const origin = processGoneRendererOrigin(event)
     recordCoalescedDurableCrashBreadcrumb({
       name: 'process_gone_suppressed',
@@ -202,7 +218,7 @@ export function recordProcessGoneCrash(
   if (!store) {
     recordDurableCrashBreadcrumb(
       'crash_report_store_unavailable',
-      processGoneBreadcrumbData(event),
+      buildSuppressedProcessGoneBreadcrumbData(event),
       'Crash report store unavailable',
       processGoneRendererOrigin(event)
     )
@@ -221,10 +237,17 @@ export function recordProcessGoneCrash(
     return
   }
   const mainProcessLifecycle = getMainProcessLifecycleIdentity()
+  const siblingDeaths =
+    event.source === 'renderer'
+      ? findSiblingChildDeaths({ reason: event.reason, exitCode: event.exitCode, at: goneAt })
+      : []
+  const siblingDetails =
+    siblingDeaths.length > 0 ? siblingProcessDeathDetails(siblingDeaths, goneAt) : {}
   const crashDetails = buildProcessGoneCrashDetails(
     {
       ...event.details,
-      ...mainProcessLifecycle
+      ...mainProcessLifecycle,
+      ...siblingDetails
     },
     event.processType
   )
@@ -259,21 +282,30 @@ export function recordProcessGoneCrash(
 
   const crashedAtMs = Date.now()
   const expectedProcessType = expectedCrashpadProcessType(event)
-  void store
-    .record({
-      source: event.source,
-      processType: event.processType,
-      reason: event.reason,
-      exitCode: event.exitCode,
-      appVersion: app.getVersion(),
-      platform: process.platform,
-      osRelease: os.release(),
-      arch: process.arch,
-      electronVersion: process.versions.electron ?? 'unknown',
-      chromeVersion: process.versions.chrome ?? 'unknown',
-      details: crashDetails,
-      breadcrumbs: reportBreadcrumbs
-    })
+  const recorded = store.record({
+    source: event.source,
+    processType: event.processType,
+    reason: event.reason,
+    exitCode: event.exitCode,
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    osRelease: os.release(),
+    arch: process.arch,
+    electronVersion: process.versions.electron ?? 'unknown',
+    chromeVersion: process.versions.chrome ?? 'unknown',
+    details: crashDetails,
+    breadcrumbs: reportBreadcrumbs
+  })
+  trackRendererSiblingAttribution(
+    event,
+    goneAt,
+    siblingDeaths,
+    (reportId, details) => store.attachDetails(reportId, details),
+    recorded,
+    buildSuppressedProcessGoneBreadcrumbData(event),
+    processGoneRendererOrigin(event)
+  )
+  void recorded
     .then((report) => {
       // Why: kept off the returned chain so a minidump failure can never reach
       // the persist-failure handler below and release a claim that did persist.
@@ -287,7 +319,7 @@ export function recordProcessGoneCrash(
         console.error('[crash-reporting] Failed to attach minidump signature:', error)
         recordDurableCrashBreadcrumb(
           'minidump_signature_attach_failed',
-          processGoneBreadcrumbData(event),
+          buildSuppressedProcessGoneBreadcrumbData(event),
           error instanceof Error ? error.message : String(error),
           processGoneRendererOrigin(event)
         )
